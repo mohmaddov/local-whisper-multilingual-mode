@@ -1,5 +1,5 @@
 import Foundation
-import WhisperKit
+@preconcurrency import WhisperKit
 
 /// Handles local transcription using WhisperKit
 actor TranscriptionService {
@@ -25,13 +25,14 @@ actor TranscriptionService {
     }
     
     /// Load the Whisper model
-    /// Model names from HuggingFace argmaxinc/whisperkit-coreml:
-    /// - openai_whisper-tiny, openai_whisper-tiny.en (~75MB, fastest)
-    /// - openai_whisper-base, openai_whisper-base.en (~140MB, fast)
-    /// - openai_whisper-small, openai_whisper-small.en (~460MB, balanced)
-    /// - openai_whisper-medium, openai_whisper-medium.en (~1.5GB, good)
-    /// - openai_whisper-large-v3, openai_whisper-large-v3_turbo (~3GB, best)
-    func loadModel(modelName: String = "openai_whisper-base") async {
+    /// Available models from HuggingFace:
+    /// - openai_whisper-medium (~1.5GB, high accuracy)
+    /// - distil-whisper_distil-large-v3_turbo (~600MB, fast & accurate)
+    /// - openai_whisper-large-v3-v20240930_turbo (~1.6GB, latest checkpoint)
+    /// - openai_whisper-large-v3-v20240930 (~3GB, best Whisper accuracy)
+    /// - nvidia_parakeet-v3_494MB (~494MB, from argmaxinc/parakeetkit-pro)
+    /// - nvidia_parakeet-v3 (~1.3GB, from argmaxinc/parakeetkit-pro)
+    func loadModel(modelName: String = "openai_whisper-medium", modelRepo: String? = nil) async {
         guard !isLoading && whisperKit == nil else { 
             print("[TranscriptionService] Skipping load - isLoading: \(isLoading), whisperKit exists: \(whisperKit != nil)")
             return 
@@ -56,6 +57,7 @@ actor TranscriptionService {
             // which respects system proxy settings
             whisperKit = try await WhisperKit(
                 model: modelName,
+                modelRepo: modelRepo,
                 verbose: true,
                 logLevel: .debug,
                 prewarm: true,
@@ -83,11 +85,11 @@ actor TranscriptionService {
             logToFile(errorMessage)
             
             // Try with a smaller model as fallback
-            if modelName != "openai_whisper-base" {
-                print("[TranscriptionService] 🔄 Retrying with base model...")
-                logToFile("[TranscriptionService] 🔄 Retrying with base model...")
+            if modelName != "openai_whisper-medium" {
+                print("[TranscriptionService] 🔄 Retrying with medium model...")
+                logToFile("[TranscriptionService] 🔄 Retrying with medium model...")
                 isLoading = false
-                await loadModel(modelName: "openai_whisper-base")
+                await loadModel(modelName: "openai_whisper-medium")
                 return
             }
             progressContinuation.yield(0.0)

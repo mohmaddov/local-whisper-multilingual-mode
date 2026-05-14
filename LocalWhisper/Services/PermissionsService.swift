@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import AppKit
+@preconcurrency import ApplicationServices
 
 /// Handles checking and requesting macOS permissions
 @MainActor

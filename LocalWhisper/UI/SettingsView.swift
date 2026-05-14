@@ -53,13 +53,13 @@ struct ModelSettingsView: View {
     @State private var isReloading = false
     @State private var selectedModelIndex = 0
     
-    private let models: [(id: String, name: String, size: String, description: String)] = [
-        ("openai_whisper-tiny", "Tiny", "~75MB", "Fastest, basic accuracy"),
-        ("openai_whisper-base", "Base", "~140MB", "Fast, good for most uses"),
-        ("openai_whisper-small", "Small", "~460MB", "Balanced speed & accuracy"),
-        ("openai_whisper-medium", "Medium", "~1.5GB", "High accuracy"),
-        ("openai_whisper-large-v3", "Large v3", "~3GB", "Best accuracy"),
-        ("openai_whisper-large-v3_turbo", "Large v3 Turbo", "~1.6GB", "Fast & accurate")
+    private let models: [(id: String, name: String, size: String, description: String, repo: String?)] = [
+        ("openai_whisper-medium", "Whisper Medium", "~1.5GB", "High accuracy, balanced performance", nil),
+        ("distil-whisper_distil-large-v3_turbo", "Distil Large v3 Turbo", "~600MB", "Near large-v3 accuracy, much faster", nil),
+        ("openai_whisper-large-v3-v20240930_turbo", "Whisper Large v3 Turbo", "~1.6GB", "Fast & accurate, latest checkpoint", nil),
+        ("openai_whisper-large-v3-v20240930", "Whisper Large v3", "~3GB", "Best Whisper accuracy, latest checkpoint", nil),
+        ("nvidia_parakeet-v3_494MB", "Parakeet v3", "~494MB", "NVIDIA Parakeet v3, compact & accurate", "argmaxinc/parakeetkit-pro"),
+        ("nvidia_parakeet-v3", "Parakeet v3 Full", "~1.3GB", "NVIDIA Parakeet v3, highest accuracy", "argmaxinc/parakeetkit-pro")
     ]
     
     var body: some View {
@@ -117,7 +117,7 @@ struct ModelSettingsView: View {
                                 isSelected: appState.selectedModel == model.id,
                                 isLoading: isReloading && appState.selectedModel == model.id
                             ) {
-                                selectModel(model.id)
+                                selectModel(model.id, repo: model.repo)
                             }
                         }
                     }
@@ -187,7 +187,7 @@ struct ModelSettingsView: View {
         }
     }
     
-    private func selectModel(_ modelId: String) {
+    private func selectModel(_ modelId: String, repo: String? = nil) {
         guard modelId != appState.selectedModel || !appState.isModelLoaded else { return }
         
         appState.selectedModel = modelId
@@ -198,7 +198,7 @@ struct ModelSettingsView: View {
             await MainActor.run {
                 appState.isModelLoaded = false
             }
-            await appState.transcriptionService.loadModel(modelName: modelId)
+            await appState.transcriptionService.loadModel(modelName: modelId, modelRepo: repo)
             let loaded = await appState.transcriptionService.isModelLoaded
             await MainActor.run {
                 appState.isModelLoaded = loaded
@@ -210,7 +210,7 @@ struct ModelSettingsView: View {
 
 // MARK: - Model Card
 struct ModelCard: View {
-    let model: (id: String, name: String, size: String, description: String)
+    let model: (id: String, name: String, size: String, description: String, repo: String?)
     let isSelected: Bool
     let isLoading: Bool
     let action: () -> Void
@@ -607,7 +607,7 @@ struct ShortcutRecorderField: NSViewRepresentable {
 class ShortcutRecorderNSView: NSView {
     var onShortcutRecorded: ((UInt16, CGEventFlags) -> Void)?
     var onCancel: (() -> Void)?
-    private var eventMonitor: Any?
+    nonisolated(unsafe) private var eventMonitor: Any?
     
     override var acceptsFirstResponder: Bool { true }
     override var canBecomeKeyView: Bool { true }
@@ -685,7 +685,7 @@ class ShortcutRecorderNSView: NSView {
         }
     }
     
-    func stopMonitoring() {
+    nonisolated func stopMonitoring() {
         if let monitor = eventMonitor {
             NSEvent.removeMonitor(monitor)
             eventMonitor = nil

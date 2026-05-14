@@ -7,7 +7,7 @@ import os.log
 private let hotkeyLogger = Logger(subsystem: "com.localwispr.app", category: "HotkeyManager")
 
 /// Manages global keyboard shortcuts using CGEvent API
-final class HotkeyManager {
+final class HotkeyManager: @unchecked Sendable {
     static let shared = HotkeyManager()
     
     // Default shortcut: Ctrl+Shift+Space

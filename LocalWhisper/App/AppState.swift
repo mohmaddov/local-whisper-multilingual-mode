@@ -114,7 +114,7 @@ final class AppState: ObservableObject {
     
     private init() {
         // Load settings from UserDefaults
-        self.selectedModel = UserDefaults.standard.string(forKey: "selectedModel") ?? "openai_whisper-base"
+        self.selectedModel = UserDefaults.standard.string(forKey: "selectedModel") ?? "openai_whisper-medium"
         self.language = UserDefaults.standard.string(forKey: "language") ?? "en"
         self.useClipboardFallback = UserDefaults.standard.object(forKey: "useClipboardFallback") as? Bool ?? true
         self.useSimulateKeypresses = UserDefaults.standard.object(forKey: "useSimulateKeypresses") as? Bool ?? false

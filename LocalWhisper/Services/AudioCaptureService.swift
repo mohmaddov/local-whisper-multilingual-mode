@@ -44,9 +44,23 @@ actor AudioCaptureService {
         }
         
         // Install tap on input node
+        // All non-Sendable audio processing (buffer, converter) happens
+        // synchronously in the tap callback; only Sendable [Float] crosses
+        // the actor boundary.
+        let localConverter = converter
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            Task {
-                await self?.processBuffer(buffer, converter: converter, outputFormat: converterFormat)
+            // Extract + convert samples synchronously on the audio thread
+            let finalSamples = Self.extractSamples(
+                from: buffer,
+                converter: localConverter,
+                targetSampleRate: 16000,
+                outputFormat: converterFormat
+            )
+            guard let finalSamples else { return }
+            guard let self else { return }
+            
+            Task { [finalSamples] in
+                await self.appendSamples(finalSamples)
             }
         }
         
@@ -70,17 +84,15 @@ actor AudioCaptureService {
         return AudioData(samples: samples)
     }
     
-    private func processBuffer(
-        _ buffer: AVAudioPCMBuffer,
+    /// Synchronously extract and convert float samples from an AVAudioPCMBuffer.
+    /// All non-Sendable types stay within this static method; only [Float] crosses actor boundaries.
+    private nonisolated static func extractSamples(
+        from buffer: AVAudioPCMBuffer,
         converter: AVAudioConverter?,
+        targetSampleRate: Double,
         outputFormat: AVAudioFormat
-    ) {
-        guard isCurrentlyRecording else { return }
-        
-        let samples: [Float]
-        
+    ) -> [Float]? {
         if let converter = converter {
-            // Convert to 16kHz mono
             let frameCapacity = AVAudioFrameCount(
                 Double(buffer.frameLength) * targetSampleRate / buffer.format.sampleRate
             )
@@ -88,7 +100,7 @@ actor AudioCaptureService {
             guard let convertedBuffer = AVAudioPCMBuffer(
                 pcmFormat: outputFormat,
                 frameCapacity: frameCapacity
-            ) else { return }
+            ) else { return nil }
             
             var error: NSError?
             let status = converter.convert(to: convertedBuffer, error: &error) { inNumPackets, outStatus in
@@ -97,22 +109,26 @@ actor AudioCaptureService {
             }
             
             guard status != .error, let channelData = convertedBuffer.floatChannelData?[0] else {
-                return
+                return nil
             }
             
-            samples = Array(UnsafeBufferPointer(
+            return Array(UnsafeBufferPointer(
                 start: channelData,
                 count: Int(convertedBuffer.frameLength)
             ))
         } else {
             // Already in correct format
-            guard let channelData = buffer.floatChannelData?[0] else { return }
-            samples = Array(UnsafeBufferPointer(
+            guard let channelData = buffer.floatChannelData?[0] else { return nil }
+            return Array(UnsafeBufferPointer(
                 start: channelData,
                 count: Int(buffer.frameLength)
             ))
         }
-        
+    }
+    
+    /// Append extracted float samples to the recording buffer (actor-isolated)
+    private func appendSamples(_ samples: [Float]) {
+        guard isCurrentlyRecording else { return }
         audioBuffers.append(contentsOf: samples)
     }
 }
