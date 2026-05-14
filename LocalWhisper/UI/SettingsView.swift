@@ -162,6 +162,25 @@ struct ModelSettingsView: View {
                     .cornerRadius(12)
                 }
                 
+                // Text Injection
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Text Injection")
+                        .font(.headline)
+                    
+                    Toggle(isOn: $appState.useSimulateKeypresses) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Simulate keypresses")
+                            Text("Types each character individually instead of pasting. Useful for apps that don't support Cmd+V (e.g., Emacs, terminals).")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .padding()
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(12)
+                }
+                
                 Spacer()
             }
             .padding(24)

@@ -23,6 +23,9 @@ final class AppState: ObservableObject {
     @Published var useClipboardFallback: Bool {
         didSet { UserDefaults.standard.set(useClipboardFallback, forKey: "useClipboardFallback") }
     }
+    @Published var useSimulateKeypresses: Bool {
+        didSet { UserDefaults.standard.set(useSimulateKeypresses, forKey: "useSimulateKeypresses") }
+    }
     @Published var customVocabulary: [String] {
         didSet { UserDefaults.standard.set(customVocabulary, forKey: "customVocabulary") }
     }
@@ -114,6 +117,7 @@ final class AppState: ObservableObject {
         self.selectedModel = UserDefaults.standard.string(forKey: "selectedModel") ?? "openai_whisper-base"
         self.language = UserDefaults.standard.string(forKey: "language") ?? "en"
         self.useClipboardFallback = UserDefaults.standard.object(forKey: "useClipboardFallback") as? Bool ?? true
+        self.useSimulateKeypresses = UserDefaults.standard.object(forKey: "useSimulateKeypresses") as? Bool ?? false
         self.customVocabulary = UserDefaults.standard.stringArray(forKey: "customVocabulary") ?? []
         self.muteAudioWhileRecording = UserDefaults.standard.object(forKey: "muteAudioWhileRecording") as? Bool ?? true
         

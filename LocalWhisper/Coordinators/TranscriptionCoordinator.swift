@@ -145,7 +145,8 @@ final class TranscriptionCoordinator: ObservableObject {
             if !text.isEmpty {
                 try await textInjectionService.injectText(
                     text,
-                    useClipboardFallback: appState.useClipboardFallback
+                    useClipboardFallback: appState.useClipboardFallback,
+                    useSimulateKeypresses: appState.useSimulateKeypresses
                 )
             }
             
