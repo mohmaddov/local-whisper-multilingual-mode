@@ -21,12 +21,16 @@ struct MenuBarView: View {
             
             Divider()
             
+            // Note Mode
+            noteModeSection
+            Divider()
+
             // Last Transcription
             if !appState.lastTranscription.isEmpty {
                 lastTranscriptionSection
                 Divider()
             }
-            
+
             // Shortcut Info
             shortcutSection
             
@@ -249,6 +253,61 @@ struct MenuBarView: View {
         }
     }
     
+    // MARK: - Note Mode
+
+    private var noteModeSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("AI Notes")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                if appState.noteState != .idle {
+                    Text(appState.noteState.description)
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            HStack(spacing: 8) {
+                switch appState.noteState {
+                case .idle, .error:
+                    Button {
+                        Task { await appState.coordinator.startNoteRecording() }
+                    } label: {
+                        Label("Start Note", systemImage: "record.circle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(.red)
+                case .recording:
+                    Button {
+                        Task { await appState.coordinator.stopNoteRecording() }
+                    } label: {
+                        Label("Stop · \(formatElapsed(appState.noteElapsedSeconds))", systemImage: "stop.circle")
+                            .font(.callout)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                case .transcribing, .summarizing:
+                    ProgressView().scaleEffect(0.6)
+                    Text(appState.noteState.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+        }
+    }
+
+    private func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
+    }
+
     // MARK: - Shortcut Section
     private var shortcutSection: some View {
         VStack(alignment: .leading, spacing: 4) {

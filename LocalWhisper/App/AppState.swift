@@ -8,6 +8,12 @@ final class AppState: ObservableObject {
     
     // MARK: - Published State
     @Published var transcriptionState: TranscriptionState = .idle
+    /// Independent state machine for the note-taking flow (Plaud-style: tap to
+    /// start, tap to stop, then transcribe + summarize). Kept separate from
+    /// `transcriptionState` which drives the push-to-talk dictation flow.
+    @Published var noteState: NoteRecordingState = .idle
+    @Published var noteElapsedSeconds: TimeInterval = 0
+    @Published var noteRecordingStartedAt: Date? = nil
     @Published var lastTranscription: String = ""
     @Published var errorMessage: String?
     @Published var modelLoadProgress: Double = 0.0
@@ -137,6 +143,9 @@ final class AppState: ObservableObject {
     let ledgerService: LedgerService
     let errorLogService: ErrorLogService
     let transcriptionLogService: TranscriptionLogService
+    let noteService: NoteService
+    let tagExtractionService: TagExtractionService
+    let noteSummarizationService: NoteSummarizationService
     let coordinator: TranscriptionCoordinator
     
     private init() {
@@ -175,6 +184,10 @@ final class AppState: ObservableObject {
         self.ledgerService = LedgerService()
         self.errorLogService = ErrorLogService.shared
         self.transcriptionLogService = TranscriptionLogService()
+        self.noteService = NoteService()
+        let tagSvc = TagExtractionService()
+        self.tagExtractionService = tagSvc
+        self.noteSummarizationService = NoteSummarizationService(llm: tagSvc)
         self.coordinator = TranscriptionCoordinator()
 
         // Inject dependencies after init

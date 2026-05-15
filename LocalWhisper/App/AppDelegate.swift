@@ -234,6 +234,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             appState.activeModelName = await appState.transcriptionService.loadedModelName
             appState.downloadingModel = nil
             log("[AppDelegate] ✅ Model load complete - isModelLoaded: \(appState.isModelLoaded), active: \(appState.activeModelName ?? "nil")")
+
+            // Load the LLM in background — only needed for AI Notes summarization.
+            // Best-effort: failure here doesn't block dictation.
+            Task.detached(priority: .background) {
+                do {
+                    try await AppState.shared.tagExtractionService.loadModel()
+                    print("[AppDelegate] ✅ Note summarization LLM loaded")
+                } catch {
+                    print("[AppDelegate] ⚠️ LLM load skipped: \(error.localizedDescription)")
+                }
+            }
         } else {
             log("[AppDelegate] ⚠️ Skipping model load - microphone permission not granted")
         }

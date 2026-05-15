@@ -131,6 +131,23 @@ actor TagExtractionService {
         modelContainer = nil
         currentModelId = nil
     }
+
+    /// Run an arbitrary prompt against the loaded LLM. Used by NoteSummarizationService
+    /// to keep the heavy MLX model loaded once and reused across features.
+    func generate(prompt: String, maxTokens: Int = 512) async throws -> String {
+        guard let container = modelContainer else {
+            throw TagExtractionError.modelNotLoaded
+        }
+        let input = try await container.prepare(input: .init(prompt: prompt))
+        let parameters = GenerateParameters(maxTokens: maxTokens)
+        var response = ""
+        for try await generation in try await container.generate(input: input, parameters: parameters) {
+            if let chunk = generation.chunk {
+                response += chunk
+            }
+        }
+        return response
+    }
     
     // MARK: - Tag Extraction
     

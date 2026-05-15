@@ -17,12 +17,14 @@ struct SettingsView: View {
                     .tag(2)
                 Label("Permissions", systemImage: "lock.shield")
                     .tag(3)
-                Label("Logs", systemImage: "doc.text.magnifyingglass")
+                Label("Notes", systemImage: "note.text")
                     .tag(4)
-                Label("Stats", systemImage: "chart.bar")
+                Label("Logs", systemImage: "doc.text.magnifyingglass")
                     .tag(5)
-                Label("About", systemImage: "info.circle")
+                Label("Stats", systemImage: "chart.bar")
                     .tag(6)
+                Label("About", systemImage: "info.circle")
+                    .tag(7)
             }
             .listStyle(.sidebar)
             .frame(minWidth: 150)
@@ -38,10 +40,12 @@ struct SettingsView: View {
                 case 3:
                     PermissionsSettingsView()
                 case 4:
-                    LogsSettingsView()
+                    NotesSettingsView()
                 case 5:
-                    StatsSettingsView()
+                    LogsSettingsView()
                 case 6:
+                    StatsSettingsView()
+                case 7:
                     AboutView()
                 default:
                     ModelSettingsView()

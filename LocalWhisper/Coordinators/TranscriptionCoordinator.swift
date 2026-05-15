@@ -242,6 +242,131 @@ final class TranscriptionCoordinator: ObservableObject {
         }
     }
     
+    // MARK: - Note Mode (Plaud.ai-style long-form recording)
+
+    private var noteTimerTask: Task<Void, Never>?
+
+    /// Begin a long-form note recording. Tap to start (no hold). Audio capture
+    /// reuses the same AudioCaptureService — only the orchestration differs.
+    func startNoteRecording() async {
+        guard let appState = appState, let audioService = audioService else { return }
+        guard appState.noteState == .idle else { return }
+        guard appState.transcriptionState == .idle else {
+            appState.errorMessage = "Stop current dictation before starting a note."
+            return
+        }
+        let modelLoaded = await transcriptionService?.isModelLoaded == true
+        guard modelLoaded else {
+            appState.errorMessage = "Whisper model not loaded yet."
+            return
+        }
+        guard appState.permissionsService.microphoneGranted else {
+            appState.errorMessage = "Microphone permission required."
+            return
+        }
+
+        do {
+            try await audioService.startRecording()
+            NSSound(named: "Glass")?.play()
+            appState.noteState = .recording
+            appState.noteRecordingStartedAt = Date()
+            appState.noteElapsedSeconds = 0
+            appState.errorMessage = nil
+
+            // Drive an elapsed-seconds counter for the menu bar UI.
+            let started = Date()
+            noteTimerTask?.cancel()
+            noteTimerTask = Task { @MainActor in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if Task.isCancelled { return }
+                    self.appState?.noteElapsedSeconds = Date().timeIntervalSince(started)
+                }
+            }
+            logger.info("Note recording started")
+        } catch {
+            appState.noteState = .error(error.localizedDescription)
+            appState.errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Stop the note recording and run transcription + summarization.
+    func stopNoteRecording() async {
+        guard let appState = appState,
+              let audioService = audioService,
+              let transcriptionService = transcriptionService else { return }
+        guard appState.noteState == .recording else { return }
+
+        noteTimerTask?.cancel()
+        noteTimerTask = nil
+
+        let audioData = await audioService.stopRecording()
+        NSSound(named: "Glass")?.play()
+        logger.info("Note recording stopped: \(String(format: "%.2f", audioData.duration))s, \(audioData.samples.count) samples")
+
+        guard !audioData.isTooShort else {
+            appState.noteState = .idle
+            appState.noteRecordingStartedAt = nil
+            appState.errorMessage = "Note too short — discarded."
+            return
+        }
+
+        // 1) Transcribe.
+        appState.noteState = .transcribing
+        let multilingual = appState.multilingualMode
+        let prompt = appState.vocabularyPrompt
+        let transcribeStart = CFAbsoluteTimeGetCurrent()
+        let outcome: TranscriptionOutcome
+        do {
+            if multilingual {
+                outcome = try await transcriptionService.transcribeMultilingualRich(audioData, prompt: prompt)
+            } else {
+                outcome = try await transcriptionService.transcribeRich(
+                    audioData,
+                    language: appState.language,
+                    prompt: prompt
+                )
+            }
+        } catch {
+            appState.noteState = .error(error.localizedDescription)
+            appState.errorMessage = error.localizedDescription
+            await errorLogService?.logError(error, source: "Note transcription")
+            return
+        }
+        let transcriptionMs = Int((CFAbsoluteTimeGetCurrent() - transcribeStart) * 1000)
+
+        // 2) Summarize (best-effort; falls back to raw transcription on failure).
+        appState.noteState = .summarizing
+        let summarizer = appState.noteSummarizationService
+        let summary = await summarizer.summarize(
+            transcription: outcome.text,
+            languages: outcome.detectedLanguages
+        )
+
+        // 3) Persist.
+        let note = Note(
+            title: summary.title,
+            markdown: summary.markdown,
+            rawTranscription: outcome.text,
+            durationSeconds: audioData.duration,
+            detectedLanguages: outcome.detectedLanguages,
+            whisperModel: outcome.modelName,
+            llmModel: summary.llmModel,
+            processingMsTranscription: transcriptionMs,
+            processingMsLLM: summary.processingMs,
+            llmSucceeded: summary.succeeded
+        )
+        await appState.noteService.append(note)
+
+        // 4) Done.
+        appState.noteState = .idle
+        appState.noteRecordingStartedAt = nil
+        appState.noteElapsedSeconds = 0
+        appState.lastTranscription = outcome.text
+        NSSound(named: "Hero")?.play()
+        logger.info("Note saved: \(note.title)")
+    }
+
     /// Cancel current operation
     func cancel() async {
         guard let appState = appState,
