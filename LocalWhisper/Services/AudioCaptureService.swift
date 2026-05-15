@@ -52,7 +52,8 @@ actor AudioCaptureService {
         // synchronously in the tap callback; only Sendable [Float] crosses
         // the actor boundary.
         let localConverter = converter
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+        // 2048 frames ≈ 42ms latency @ 48kHz (half of prior 4096), so audio reaches the buffer faster.
+        inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
             // Extract + convert samples synchronously on the audio thread
             let finalSamples = Self.extractSamples(
                 from: buffer,

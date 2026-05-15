@@ -12,6 +12,14 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var modelLoadProgress: Double = 0.0
     @Published var isModelLoaded: Bool = false
+    /// Identifier of the model currently being downloaded/loaded in the background.
+    /// `nil` when no download is in progress. The active model (if any) remains
+    /// usable while this is non-nil.
+    @Published var downloadingModel: String? = nil
+    /// Identifier of the currently active (loaded) model, as reported by the
+    /// transcription service. May differ from `selectedModel` while a download
+    /// is in flight.
+    @Published var activeModelName: String? = nil
     
     // MARK: - Settings (stored in UserDefaults)
     @Published var selectedModel: String {

@@ -33,29 +33,34 @@ actor TranscriptionService {
     /// - nvidia_parakeet-v3_494MB (~494MB, from argmaxinc/parakeetkit-pro)
     /// - nvidia_parakeet-v3 (~1.3GB, from argmaxinc/parakeetkit-pro)
     func loadModel(modelName: String = "openai_whisper-medium", modelRepo: String? = nil) async {
-        guard !isLoading && whisperKit == nil else { 
-            print("[TranscriptionService] Skipping load - isLoading: \(isLoading), whisperKit exists: \(whisperKit != nil)")
-            return 
+        // Skip if this exact model is already loaded.
+        if currentModelName == modelName && whisperKit != nil {
+            print("[TranscriptionService] Model \(modelName) already loaded — skipping")
+            return
         }
-        
+        guard !isLoading else {
+            print("[TranscriptionService] Another load is in progress — skipping")
+            return
+        }
+
         isLoading = true
         progressContinuation.yield(0.0)
-        
+
         let startTime = CFAbsoluteTimeGetCurrent()
-        
+
         // Log proxy settings for debugging
         logProxySettings()
-        
+
         do {
             progressContinuation.yield(0.1)
-            print("[TranscriptionService] ⏳ Loading model: \(modelName)...")
-            
-            // Initialize WhisperKit with model variant
-            // WhisperKit will download from HuggingFace if not cached
-            // Use verbose mode to see download progress
-            // Note: useBackgroundDownloadSession=false ensures we use the default URLSession
-            // which respects system proxy settings
-            whisperKit = try await WhisperKit(
+            let previousModel = currentModelName ?? "none"
+            print("[TranscriptionService] ⏳ Loading model: \(modelName) (current \(previousModel) stays active until ready)")
+
+            // Initialize the new model into a LOCAL variable — `self.whisperKit`
+            // keeps pointing at the currently-loaded model so transcriptions
+            // remain usable while the new one downloads/loads.
+            // useBackgroundDownloadSession=false ensures URLSession respects system proxy.
+            let newWhisper = try await WhisperKit(
                 model: modelName,
                 modelRepo: modelRepo,
                 verbose: true,
@@ -63,9 +68,12 @@ actor TranscriptionService {
                 prewarm: true,
                 load: true,
                 download: true,
-                useBackgroundDownloadSession: false  // Use foreground session for proxy compatibility
+                useBackgroundDownloadSession: false
             )
-            
+
+            // Atomic swap: replace the old instance only now that the new one is ready.
+            whisperKit = newWhisper
+
             let loadTime = CFAbsoluteTimeGetCurrent() - startTime
             currentModelName = modelName
             
@@ -76,6 +84,11 @@ actor TranscriptionService {
                 logToFile("[TranscriptionService] 📁 Model folder: \(modelPath)")
             }
             
+            // Warm-up: run a real (silent) inference so the first user transcription
+            // doesn't pay the JIT/kernel-compile cost. Without this, the first hotkey
+            // press takes 2-3x longer than subsequent ones.
+            await warmUp()
+
             progressContinuation.yield(1.0)
             print("[TranscriptionService] ✅ Model \(modelName) loaded successfully in \(String(format: "%.2f", loadTime))s")
             logToFile("[TranscriptionService] ✅ Model \(modelName) loaded successfully in \(String(format: "%.2f", loadTime))s")
@@ -231,6 +244,111 @@ actor TranscriptionService {
         }
         whisperKit = nil
         currentModelName = nil
+    }
+
+    /// Force-reload the active model (used by "Re-download model" in Settings).
+    /// Deletes the local cache directory so WhisperKit re-downloads from HuggingFace.
+    func reloadModel(deletingCache: Bool = false) async {
+        let model = currentModelName ?? "openai_whisper-medium"
+        unloadModel()
+        if deletingCache {
+            let folder = Self.modelCacheFolder
+            try? FileManager.default.removeItem(at: folder)
+            print("[TranscriptionService] 🧹 Cleared cache at \(folder.path)")
+        }
+        await loadModel(modelName: model)
+    }
+
+    /// Path to WhisperKit's HuggingFace cache (where models are downloaded).
+    static var modelCacheFolder: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml")
+    }
+
+    /// Metadata for a model that has been downloaded to local cache.
+    struct DownloadedModel: Identifiable, Sendable {
+        let modelName: String   // e.g. "openai_whisper-medium"
+        let repo: String        // e.g. "argmaxinc/whisperkit-coreml"
+        let sizeBytes: Int64
+        let path: URL
+        var id: String { "\(repo)/\(modelName)" }
+        var sizeFormatted: String {
+            ByteCountFormatter.string(fromByteCount: sizeBytes, countStyle: .file)
+        }
+    }
+
+    /// Scan the HuggingFace cache and return every model that has been downloaded.
+    nonisolated static func listDownloadedModels() -> [DownloadedModel] {
+        let base = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/huggingface/models/argmaxinc")
+        let repos = ["whisperkit-coreml", "parakeetkit-pro"]
+        var result: [DownloadedModel] = []
+        for repoName in repos {
+            let repoPath = base.appendingPathComponent(repoName)
+            guard let contents = try? FileManager.default.contentsOfDirectory(
+                at: repoPath,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ) else { continue }
+            for url in contents {
+                let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard isDir else { continue }
+                result.append(DownloadedModel(
+                    modelName: url.lastPathComponent,
+                    repo: "argmaxinc/\(repoName)",
+                    sizeBytes: directorySize(url),
+                    path: url
+                ))
+            }
+        }
+        return result.sorted { $0.modelName < $1.modelName }
+    }
+
+    /// Delete a downloaded model from local cache.
+    nonisolated static func deleteDownloadedModel(at url: URL) throws {
+        try FileManager.default.removeItem(at: url)
+    }
+
+    /// Recursively sum the allocated size of every regular file under `url`.
+    nonisolated private static func directorySize(_ url: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .isRegularFileKey]
+        ) else { return 0 }
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(
+                forKeys: [.totalFileAllocatedSizeKey, .isRegularFileKey]
+            ),
+                  values.isRegularFile == true,
+                  let size = values.totalFileAllocatedSize else { continue }
+            total += Int64(size)
+        }
+        return total
+    }
+
+    /// Run a 1-second silent inference to JIT-compile kernels and warm caches.
+    /// Cuts the first real transcription's latency by 2-3x on cold start.
+    private func warmUp() async {
+        guard let whisper = whisperKit else { return }
+        let silence = Array<Float>(repeating: 0.0, count: 16_000) // 1s @ 16kHz
+        let options = DecodingOptions(
+            task: .transcribe,
+            language: "en",
+            usePrefillPrompt: true,
+            detectLanguage: false,
+            skipSpecialTokens: true,
+            withoutTimestamps: true,
+            suppressBlank: true,
+            chunkingStrategy: nil
+        )
+        do {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            _ = try await whisper.transcribe(audioArray: silence, decodeOptions: options)
+            let ms = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            print("[TranscriptionService] 🔥 Warm-up done in \(ms)ms")
+        } catch {
+            print("[TranscriptionService] ⚠️ Warm-up failed (non-fatal): \(error.localizedDescription)")
+        }
     }
     
     /// Log message to file for debugging

@@ -37,7 +37,13 @@ let package = Package(
             ],
             swiftSettings: [
                 // Disable strict concurrency for compatibility
-                .unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"])
+                .unsafeFlags(["-Xfrontend", "-strict-concurrency=minimal"]),
+                // Release-only optimizations: whole-module + LTO (size+speed)
+                .unsafeFlags(["-O", "-whole-module-optimization"], .when(configuration: .release)),
+            ],
+            linkerSettings: [
+                // Link-time optimization for smaller, faster release binaries
+                .unsafeFlags(["-Xlinker", "-dead_strip"], .when(configuration: .release)),
             ]
         )
     ]

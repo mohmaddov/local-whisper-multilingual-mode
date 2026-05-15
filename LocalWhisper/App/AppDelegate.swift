@@ -219,10 +219,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Load whisper model in background (use the user's selected model)
         if appState.permissionsService.microphoneGranted {
             log("[AppDelegate] 🚀 Starting model load: \(appState.selectedModel)")
+            appState.downloadingModel = appState.selectedModel
             await appState.transcriptionService.loadModel(modelName: appState.selectedModel)
             // Update model loaded state after loading completes
             appState.isModelLoaded = await appState.transcriptionService.isModelLoaded
-            log("[AppDelegate] ✅ Model load complete - isModelLoaded: \(appState.isModelLoaded)")
+            appState.activeModelName = await appState.transcriptionService.loadedModelName
+            appState.downloadingModel = nil
+            log("[AppDelegate] ✅ Model load complete - isModelLoaded: \(appState.isModelLoaded), active: \(appState.activeModelName ?? "nil")")
         } else {
             log("[AppDelegate] ⚠️ Skipping model load - microphone permission not granted")
         }

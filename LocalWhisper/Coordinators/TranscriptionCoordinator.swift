@@ -88,6 +88,7 @@ final class TranscriptionCoordinator: ObservableObject {
             }
             
             try await audioService.startRecording()
+            NSSound(named: "Tink")?.play()
             print("[Coordinator] Recording started")
         } catch {
             // Restore audio if we muted it
@@ -120,6 +121,7 @@ final class TranscriptionCoordinator: ObservableObject {
         
         // Stop recording
         let audioData = await audioService.stopRecording()
+        NSSound(named: "Pop")?.play()
         
         // Restore system audio if we muted it
         if appState.muteAudioWhileRecording, let audioMuteService = audioMuteService {

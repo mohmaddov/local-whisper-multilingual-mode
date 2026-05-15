@@ -54,7 +54,6 @@ struct SettingsView: View {
 // MARK: - Model Settings
 struct ModelSettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var isReloading = false
     @State private var selectedModelIndex = 0
     
     private let models: [(id: String, name: String, size: String, description: String, repo: String?)] = [
@@ -89,20 +88,28 @@ struct ModelSettingsView: View {
                             .font(.title2)
                             .foregroundStyle(appState.isModelLoaded ? .green : .yellow)
                     }
-                    
+
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(appState.isModelLoaded ? "Model Ready" : "Loading Model...")
-                            .font(.headline)
-                        Text(appState.selectedModel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        if let downloading = appState.downloadingModel {
+                            Text(appState.activeModelName != nil ? "Downloading new model (\(downloading))" : "Loading model…")
+                                .font(.headline)
+                            Text("Active: \(appState.activeModelName ?? "none")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text(appState.isModelLoaded ? "Model Ready" : "No model loaded")
+                                .font(.headline)
+                            Text(appState.activeModelName ?? appState.selectedModel)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    
+
                     Spacer()
-                    
-                    if !appState.isModelLoaded && appState.modelLoadProgress > 0 {
-                        ProgressView(value: appState.modelLoadProgress)
-                            .frame(width: 100)
+
+                    if appState.downloadingModel != nil {
+                        ProgressView()
+                            .scaleEffect(0.8)
                     }
                 }
                 .padding()
@@ -118,12 +125,19 @@ struct ModelSettingsView: View {
                         ForEach(models, id: \.id) { model in
                             ModelCard(
                                 model: model,
-                                isSelected: appState.selectedModel == model.id,
-                                isLoading: isReloading && appState.selectedModel == model.id
+                                isActive: appState.activeModelName == model.id,
+                                isDownloading: appState.downloadingModel == model.id,
+                                isSelected: appState.selectedModel == model.id
                             ) {
                                 selectModel(model.id, repo: model.repo)
                             }
                         }
+                    }
+                    if appState.downloadingModel != nil, appState.activeModelName != nil, appState.downloadingModel != appState.activeModelName {
+                        Text("Downloading \(appState.downloadingModel ?? "")… you can keep transcribing with \(appState.activeModelName ?? "") in the meantime.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 4)
                     }
                 }
                 
@@ -200,41 +214,249 @@ struct ModelSettingsView: View {
                     .background(Color(nsColor: .controlBackgroundColor))
                     .cornerRadius(12)
                 }
-                
+
+                // Cache & Maintenance
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Model Cache")
+                        .font(.headline)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Models are downloaded from HuggingFace and cached locally. Use these tools to manage them.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Button {
+                                NSWorkspace.shared.open(TranscriptionService.modelCacheFolder)
+                            } label: {
+                                Label("Open Model Folder", systemImage: "folder")
+                            }
+
+                            Button {
+                                NSWorkspace.shared.open(TranscriptionLogService.folderURL)
+                            } label: {
+                                Label("Open Logs Folder", systemImage: "doc.text")
+                            }
+
+                            Spacer()
+
+                            Button {
+                                let modelToReload = appState.activeModelName ?? appState.selectedModel
+                                appState.downloadingModel = modelToReload
+                                Task {
+                                    await appState.transcriptionService.reloadModel(deletingCache: true)
+                                    let loaded = await appState.transcriptionService.isModelLoaded
+                                    let active = await appState.transcriptionService.loadedModelName
+                                    await MainActor.run {
+                                        appState.isModelLoaded = loaded
+                                        appState.activeModelName = active
+                                        appState.downloadingModel = nil
+                                    }
+                                }
+                            } label: {
+                                Label("Re-download Model", systemImage: "arrow.down.circle")
+                            }
+                            .disabled(appState.downloadingModel != nil)
+                        }
+                    }
+                    .padding()
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(12)
+                }
+
+                DownloadedModelsSection()
+
                 Spacer()
             }
             .padding(24)
         }
     }
-    
+
     private func selectModel(_ modelId: String, repo: String? = nil) {
-        guard modelId != appState.selectedModel || !appState.isModelLoaded else { return }
-        
+        // Skip if it's already the active model AND not currently downloading something else.
+        if modelId == appState.activeModelName && appState.downloadingModel == nil { return }
+        // Skip if this exact model is already being downloaded.
+        if modelId == appState.downloadingModel { return }
+
         appState.selectedModel = modelId
-        isReloading = true
-        
+        appState.downloadingModel = modelId  // UI marker: this card shows "Downloading..."
+
         Task {
-            await appState.transcriptionService.unloadModel()
-            await MainActor.run {
-                appState.isModelLoaded = false
-            }
+            // Do NOT unload the current model — it stays usable for transcription
+            // while the new one downloads in the background. loadModel() does an
+            // atomic swap only once the new instance is fully loaded.
             await appState.transcriptionService.loadModel(modelName: modelId, modelRepo: repo)
             let loaded = await appState.transcriptionService.isModelLoaded
+            let activeName = await appState.transcriptionService.loadedModelName
             await MainActor.run {
                 appState.isModelLoaded = loaded
-                isReloading = false
+                appState.activeModelName = activeName
+                appState.downloadingModel = nil
             }
         }
+    }
+}
+
+// MARK: - Downloaded Models Section
+struct DownloadedModelsSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var downloaded: [TranscriptionService.DownloadedModel] = []
+    @State private var pendingDeletion: TranscriptionService.DownloadedModel?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Downloaded Models")
+                    .font(.headline)
+                Spacer()
+                Text(totalSizeLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button {
+                    refresh()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Refresh list")
+            }
+
+            if downloaded.isEmpty {
+                Text("No models downloaded yet.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(12)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(downloaded.enumerated()), id: \.element.id) { idx, model in
+                        DownloadedModelRow(
+                            model: model,
+                            isActive: appState.activeModelName == model.modelName,
+                            isBusy: appState.downloadingModel != nil,
+                            onDelete: { pendingDeletion = model }
+                        )
+                        if idx < downloaded.count - 1 {
+                            Divider().padding(.leading, 12)
+                        }
+                    }
+                }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(12)
+            }
+        }
+        .onAppear { refresh() }
+        .onChange(of: appState.downloadingModel) { _, newValue in
+            // Refresh when a download finishes (downloadingModel goes from non-nil to nil)
+            if newValue == nil { refresh() }
+        }
+        .confirmationDialog(
+            "Delete \(pendingDeletion?.modelName ?? "")?",
+            isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let model = pendingDeletion {
+                    delete(model)
+                }
+                pendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { pendingDeletion = nil }
+        } message: {
+            Text("This will remove \(pendingDeletion?.sizeFormatted ?? "") from disk. You can re-download it later.")
+        }
+    }
+
+    private var totalSizeLabel: String {
+        let total = downloaded.reduce(Int64(0)) { $0 + $1.sizeBytes }
+        return ByteCountFormatter.string(fromByteCount: total, countStyle: .file)
+    }
+
+    private func refresh() {
+        downloaded = TranscriptionService.listDownloadedModels()
+    }
+
+    private func delete(_ model: TranscriptionService.DownloadedModel) {
+        do {
+            try TranscriptionService.deleteDownloadedModel(at: model.path)
+            refresh()
+        } catch {
+            print("[Settings] Failed to delete model \(model.modelName): \(error)")
+        }
+    }
+}
+
+struct DownloadedModelRow: View {
+    let model: TranscriptionService.DownloadedModel
+    let isActive: Bool
+    let isBusy: Bool
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: isActive ? "checkmark.circle.fill" : "shippingbox")
+                .foregroundStyle(isActive ? .green : .secondary)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.modelName)
+                    .font(.body)
+                Text("\(model.repo) · \(model.sizeFormatted)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if isActive {
+                Text("In use")
+                    .font(.caption2)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.2))
+                    .foregroundStyle(.green)
+                    .cornerRadius(4)
+            } else {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.borderless)
+                .disabled(isBusy)
+                .help(isBusy ? "Wait for current download to finish" : "Delete this model")
+            }
+        }
+        .padding(12)
     }
 }
 
 // MARK: - Model Card
 struct ModelCard: View {
     let model: (id: String, name: String, size: String, description: String, repo: String?)
+    let isActive: Bool
+    let isDownloading: Bool
     let isSelected: Bool
-    let isLoading: Bool
     let action: () -> Void
-    
+
+    private var borderColor: Color {
+        if isActive { return .green }
+        if isSelected { return .accentColor }
+        return .clear
+    }
+
+    private var background: Color {
+        if isActive { return Color.green.opacity(0.08) }
+        if isSelected { return Color.accentColor.opacity(0.1) }
+        return Color(nsColor: .controlBackgroundColor)
+    }
+
     var body: some View {
         Button(action: action) {
             VStack(alignment: .leading, spacing: 8) {
@@ -242,22 +464,45 @@ struct ModelCard: View {
                     Text(model.name)
                         .font(.headline)
                     Spacer()
-                    if isLoading {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                    } else if isSelected {
+                    if isDownloading {
+                        ProgressView().scaleEffect(0.7)
+                    } else if isActive {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundStyle(.green)
+                    } else if isSelected {
+                        Image(systemName: "circle.dashed")
+                            .foregroundStyle(Color.accentColor)
                     }
                 }
-                
-                Text(model.size)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2)
-                    .background(Color.secondary.opacity(0.2))
-                    .cornerRadius(4)
-                
+
+                HStack(spacing: 6) {
+                    Text(model.size)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.2))
+                        .cornerRadius(4)
+                    if isActive {
+                        Text("Active")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.2))
+                            .foregroundStyle(.green)
+                            .cornerRadius(4)
+                    } else if isDownloading {
+                        Text("Downloading…")
+                            .font(.caption2)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.2))
+                            .foregroundStyle(.orange)
+                            .cornerRadius(4)
+                    }
+                }
+
                 Text(model.description)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -265,14 +510,15 @@ struct ModelCard: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? Color.accentColor.opacity(0.1) : Color(nsColor: .controlBackgroundColor))
+            .background(background)
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+                    .stroke(borderColor, lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
+        .disabled(isDownloading)
     }
 }
 
