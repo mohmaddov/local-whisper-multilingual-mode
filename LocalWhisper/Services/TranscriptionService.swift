@@ -98,6 +98,57 @@ actor TranscriptionService {
         isLoading = false
     }
     
+    /// Transcribe audio with per-segment language detection (multilingual mode).
+    /// Splits audio into 5-second chunks and detects the language independently for each,
+    /// enabling seamless switching between languages within a single recording.
+    func transcribeMultilingual(_ audio: AudioData, prompt: String? = nil) async throws -> String {
+        guard let whisper = whisperKit else {
+            throw TranscriptionError.modelNotLoaded
+        }
+        guard !audio.isTooShort else {
+            throw TranscriptionError.audioTooShort
+        }
+
+        let sampleRate = 16000
+        let segmentSamples = 5 * sampleRate // 5-second segments
+        let minSegmentSamples = sampleRate / 2 // 0.5s minimum
+        let samples = audio.samples
+
+        var promptTokens: [Int]? = nil
+        if let prompt = prompt, !prompt.isEmpty, let tokenizer = whisper.tokenizer {
+            let encoded = tokenizer.encode(text: " " + prompt)
+            promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        }
+
+        let options = DecodingOptions(
+            task: .transcribe,
+            language: nil, // auto-detect per segment
+            skipSpecialTokens: true,
+            withoutTimestamps: true,
+            promptTokens: promptTokens
+        )
+
+        var parts: [String] = []
+        var offset = 0
+
+        while offset < samples.count {
+            let end = min(offset + segmentSamples, samples.count)
+            let chunk = Array(samples[offset..<end])
+            offset += segmentSamples
+
+            guard chunk.count >= minSegmentSamples else { continue }
+
+            let results = try await whisper.transcribe(audioArray: chunk, decodeOptions: options)
+            let text = results.compactMap { $0.text }.joined(separator: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                parts.append(text)
+            }
+        }
+
+        return parts.joined(separator: " ")
+    }
+
     /// Transcribe audio data to text
     /// - Parameters:
     ///   - audio: The audio data to transcribe

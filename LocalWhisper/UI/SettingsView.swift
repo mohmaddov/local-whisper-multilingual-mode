@@ -123,24 +123,40 @@ struct ModelSettingsView: View {
                     }
                 }
                 
-                // Language Selection
+                // Multilingual Mode
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Language")
                         .font(.headline)
-                    
-                    Picker("", selection: $appState.language) {
-                        Text("English").tag("en")
-                        Text("Auto-detect").tag("")
-                        Divider()
-                        Text("Chinese").tag("zh")
-                        Text("Spanish").tag("es")
-                        Text("French").tag("fr")
-                        Text("German").tag("de")
-                        Text("Japanese").tag("ja")
-                        Text("Korean").tag("ko")
+
+                    Toggle(isOn: $appState.multilingualMode) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Multilingual mode")
+                            Text("Detects the language every 5 seconds — switch between English, French, Russian or any language mid-sentence.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
-                    .pickerStyle(.menu)
-                    .frame(width: 200)
+                    .toggleStyle(.switch)
+                    .padding()
+                    .background(Color(nsColor: .controlBackgroundColor))
+                    .cornerRadius(12)
+
+                    if !appState.multilingualMode {
+                        Picker("", selection: $appState.language) {
+                            Text("Auto-detect").tag("")
+                            Divider()
+                            Text("English").tag("en")
+                            Text("French").tag("fr")
+                            Text("Russian").tag("ru")
+                            Text("Chinese").tag("zh")
+                            Text("Spanish").tag("es")
+                            Text("German").tag("de")
+                            Text("Japanese").tag("ja")
+                            Text("Korean").tag("ko")
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 200)
+                    }
                 }
                 
                 // Recording Options

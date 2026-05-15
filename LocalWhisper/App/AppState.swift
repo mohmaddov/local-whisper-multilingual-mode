@@ -32,6 +32,9 @@ final class AppState: ObservableObject {
     @Published var muteAudioWhileRecording: Bool {
         didSet { UserDefaults.standard.set(muteAudioWhileRecording, forKey: "muteAudioWhileRecording") }
     }
+    @Published var multilingualMode: Bool {
+        didSet { UserDefaults.standard.set(multilingualMode, forKey: "multilingualMode") }
+    }
     
     // MARK: - Proxy Settings
     @Published var proxyEnabled: Bool {
@@ -120,6 +123,7 @@ final class AppState: ObservableObject {
         self.useSimulateKeypresses = UserDefaults.standard.object(forKey: "useSimulateKeypresses") as? Bool ?? false
         self.customVocabulary = UserDefaults.standard.stringArray(forKey: "customVocabulary") ?? []
         self.muteAudioWhileRecording = UserDefaults.standard.object(forKey: "muteAudioWhileRecording") as? Bool ?? true
+        self.multilingualMode = UserDefaults.standard.object(forKey: "multilingualMode") as? Bool ?? false
         
         // Load proxy settings
         self.proxyEnabled = UserDefaults.standard.bool(forKey: "proxyEnabled")

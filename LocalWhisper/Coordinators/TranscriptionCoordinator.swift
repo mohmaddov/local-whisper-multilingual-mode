@@ -132,11 +132,19 @@ final class TranscriptionCoordinator: ObservableObject {
         appState.transcriptionState = .transcribing
         
         do {
-            let text = try await transcriptionService.transcribe(
-                audioData,
-                language: appState.language,
-                prompt: appState.vocabularyPrompt
-            )
+            let text: String
+            if appState.multilingualMode {
+                text = try await transcriptionService.transcribeMultilingual(
+                    audioData,
+                    prompt: appState.vocabularyPrompt
+                )
+            } else {
+                text = try await transcriptionService.transcribe(
+                    audioData,
+                    language: appState.language,
+                    prompt: appState.vocabularyPrompt
+                )
+            }
             
             logger.info("Transcription result: \(text)")
             appState.lastTranscription = text
