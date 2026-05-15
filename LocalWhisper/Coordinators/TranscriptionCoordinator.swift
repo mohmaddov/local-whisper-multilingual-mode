@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 import os.log
 
 private let logger = Logger(subsystem: "com.localwispr.app", category: "Coordinator")
@@ -12,21 +13,27 @@ final class TranscriptionCoordinator: ObservableObject {
     private var transcriptionService: TranscriptionService?
     private var textInjectionService: TextInjectionService?
     private var audioMuteService: AudioMuteService?
-    
+    private var ledgerService: LedgerService?
+    private var errorLogService: ErrorLogService?
+
     private var recordingTask: Task<Void, Never>?
-    
+
     func configure(
         appState: AppState,
         audioService: AudioCaptureService,
         transcriptionService: TranscriptionService,
         textInjectionService: TextInjectionService,
-        audioMuteService: AudioMuteService
+        audioMuteService: AudioMuteService,
+        ledgerService: LedgerService,
+        errorLogService: ErrorLogService
     ) {
         self.appState = appState
         self.audioService = audioService
         self.transcriptionService = transcriptionService
         self.textInjectionService = textInjectionService
         self.audioMuteService = audioMuteService
+        self.ledgerService = ledgerService
+        self.errorLogService = errorLogService
     }
     
     /// Called when hotkey is pressed - start recording
@@ -148,7 +155,21 @@ final class TranscriptionCoordinator: ObservableObject {
             
             logger.info("Transcription result: \(text)")
             appState.lastTranscription = text
-            
+
+            // Persist to ledger
+            if !text.isEmpty, let ledgerService = ledgerService {
+                let entry = LedgerEntry(
+                    text: text,
+                    appContext: NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown",
+                    duration: audioData.duration
+                )
+                do {
+                    try await ledgerService.append(entry)
+                } catch {
+                    await errorLogService?.log(.warning, "Failed to append ledger entry: \(error.localizedDescription)", source: "Ledger")
+                }
+            }
+
             // Inject text
             if !text.isEmpty {
                 try await textInjectionService.injectText(
@@ -157,14 +178,15 @@ final class TranscriptionCoordinator: ObservableObject {
                     useSimulateKeypresses: appState.useSimulateKeypresses
                 )
             }
-            
+
             appState.transcriptionState = .idle
             appState.errorMessage = nil
-            
+
         } catch {
             appState.transcriptionState = .error(error.localizedDescription)
             appState.errorMessage = error.localizedDescription
             logger.error("Transcription failed: \(error.localizedDescription)")
+            await errorLogService?.logError(error, source: "Transcription")
             
             // Reset to idle after showing error
             Task {

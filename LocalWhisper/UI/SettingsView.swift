@@ -16,8 +16,10 @@ struct SettingsView: View {
                     .tag(2)
                 Label("Permissions", systemImage: "lock.shield")
                     .tag(3)
-                Label("About", systemImage: "info.circle")
+                Label("Logs", systemImage: "doc.text.magnifyingglass")
                     .tag(4)
+                Label("About", systemImage: "info.circle")
+                    .tag(5)
             }
             .listStyle(.sidebar)
             .frame(minWidth: 150)
@@ -33,6 +35,8 @@ struct SettingsView: View {
                 case 3:
                     PermissionsSettingsView()
                 case 4:
+                    LogsSettingsView()
+                case 5:
                     AboutView()
                 default:
                     ModelSettingsView()
@@ -901,6 +905,166 @@ struct PermissionRow: View {
             }
         }
         .padding(16)
+    }
+}
+
+// MARK: - Logs Settings
+struct LogsSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var errorLogContent: String = ""
+    @State private var recentTranscriptions: [LedgerEntry] = []
+    @State private var selectedTab = 0
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Logs")
+                        .font(.title2)
+                        .fontWeight(.semibold)
+                    Text("Inspect transcription history and runtime errors.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Picker("", selection: $selectedTab) {
+                    Text("Transcriptions").tag(0)
+                    Text("Errors").tag(1)
+                }
+                .pickerStyle(.segmented)
+
+                if selectedTab == 0 {
+                    transcriptionsView
+                } else {
+                    errorsView
+                }
+            }
+            .padding(24)
+        }
+        .task {
+            await refresh()
+        }
+    }
+
+    private var transcriptionsView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("\(recentTranscriptions.count) entries")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(LedgerService.defaultBasePath)
+                } label: {
+                    Label("Open Folder", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    Task { await refresh() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if recentTranscriptions.isEmpty {
+                emptyState("No transcriptions yet", icon: "waveform")
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(recentTranscriptions.reversed().prefix(100)) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack {
+                                Text(entry.formattedDateTime)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Text(entry.appContext)
+                                    .font(.caption2)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.secondary.opacity(0.15))
+                                    .cornerRadius(4)
+                                Text("\(Int(entry.duration))s")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            Text(entry.text)
+                                .font(.body)
+                                .textSelection(.enabled)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        Divider()
+                    }
+                }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(10)
+            }
+        }
+    }
+
+    private var errorsView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Spacer()
+                Button {
+                    NSWorkspace.shared.open(ErrorLogService.logFolderURL)
+                } label: {
+                    Label("Open Folder", systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    Task {
+                        await appState.errorLogService.clear()
+                        await refresh()
+                    }
+                } label: {
+                    Label("Clear", systemImage: "trash")
+                }
+                .buttonStyle(.bordered)
+                Button {
+                    Task { await refresh() }
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if errorLogContent.isEmpty {
+                emptyState("No errors logged", icon: "checkmark.seal")
+            } else {
+                ScrollView {
+                    Text(errorLogContent)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                }
+                .frame(maxHeight: 400)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(10)
+            }
+        }
+    }
+
+    private func emptyState(_ message: String, icon: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+            Text(message)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(40)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(12)
+    }
+
+    private func refresh() async {
+        errorLogContent = await appState.errorLogService.readTail(lineCount: 500)
+        recentTranscriptions = (try? await appState.ledgerService.getAllEntries()) ?? []
     }
 }
 

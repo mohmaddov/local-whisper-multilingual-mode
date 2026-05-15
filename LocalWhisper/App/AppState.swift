@@ -113,6 +113,8 @@ final class AppState: ObservableObject {
     let transcriptionService: TranscriptionService
     let textInjectionService: TextInjectionService
     let audioMuteService: AudioMuteService
+    let ledgerService: LedgerService
+    let errorLogService: ErrorLogService
     let coordinator: TranscriptionCoordinator
     
     private init() {
@@ -141,15 +143,19 @@ final class AppState: ObservableObject {
         self.transcriptionService = TranscriptionService()
         self.textInjectionService = TextInjectionService()
         self.audioMuteService = AudioMuteService()
+        self.ledgerService = LedgerService()
+        self.errorLogService = ErrorLogService.shared
         self.coordinator = TranscriptionCoordinator()
-        
+
         // Inject dependencies after init
         coordinator.configure(
             appState: self,
             audioService: audioService,
             transcriptionService: transcriptionService,
             textInjectionService: textInjectionService,
-            audioMuteService: audioMuteService
+            audioMuteService: audioMuteService,
+            ledgerService: ledgerService,
+            errorLogService: errorLogService
         )
         
         // Observe transcription service state
