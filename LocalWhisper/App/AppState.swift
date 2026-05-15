@@ -12,6 +12,8 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var modelLoadProgress: Double = 0.0
     @Published var isModelLoaded: Bool = false
+    /// Rolling buffer of recent peak audio levels (0...1) for the recording overlay waveform.
+    @Published var recentAudioLevels: [Float] = []
     /// Identifier of the model currently being downloaded/loaded in the background.
     /// `nil` when no download is in progress. The active model (if any) remains
     /// usable while this is non-nil.
@@ -42,6 +44,17 @@ final class AppState: ObservableObject {
     }
     @Published var multilingualMode: Bool {
         didSet { UserDefaults.standard.set(multilingualMode, forKey: "multilingualMode") }
+    }
+    @Published var dictationCommandsEnabled: Bool {
+        didSet { UserDefaults.standard.set(dictationCommandsEnabled, forKey: "dictationCommandsEnabled") }
+    }
+    /// Stored as a JSON array of {"trigger": "...", "replacement": "..."} dicts in UserDefaults.
+    @Published var dictationCommands: [DictationCommand] {
+        didSet {
+            if let data = try? JSONEncoder().encode(dictationCommands) {
+                UserDefaults.standard.set(data, forKey: "dictationCommands")
+            }
+        }
     }
     
     // MARK: - Proxy Settings
@@ -135,6 +148,13 @@ final class AppState: ObservableObject {
         self.customVocabulary = UserDefaults.standard.stringArray(forKey: "customVocabulary") ?? []
         self.muteAudioWhileRecording = UserDefaults.standard.object(forKey: "muteAudioWhileRecording") as? Bool ?? true
         self.multilingualMode = UserDefaults.standard.object(forKey: "multilingualMode") as? Bool ?? false
+        self.dictationCommandsEnabled = UserDefaults.standard.object(forKey: "dictationCommandsEnabled") as? Bool ?? false
+        if let data = UserDefaults.standard.data(forKey: "dictationCommands"),
+           let decoded = try? JSONDecoder().decode([DictationCommand].self, from: data) {
+            self.dictationCommands = decoded
+        } else {
+            self.dictationCommands = DictationCommand.defaults
+        }
         
         // Load proxy settings
         self.proxyEnabled = UserDefaults.standard.bool(forKey: "proxyEnabled")
@@ -173,6 +193,18 @@ final class AppState: ObservableObject {
         Task {
             for await progress in transcriptionService.loadProgressStream {
                 self.modelLoadProgress = progress
+            }
+        }
+
+        // Observe mic levels for the recording overlay waveform.
+        let levelStream = audioService.levelStream
+        Task { [weak self] in
+            for await level in levelStream {
+                guard let self else { return }
+                var buf = self.recentAudioLevels
+                buf.append(level)
+                if buf.count > 96 { buf.removeFirst(buf.count - 96) }
+                self.recentAudioLevels = buf
             }
         }
         

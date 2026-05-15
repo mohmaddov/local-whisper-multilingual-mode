@@ -8,6 +8,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var appState: AppState { AppState.shared }
     private let hotkeyManager = HotkeyManager.shared
+    private let recordingOverlay = RecordingOverlayController()
     private var cancellables = Set<AnyCancellable>()
     
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -16,6 +17,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         setupMenuBar()
         setupGlobalShortcut()
+        recordingOverlay.configure(appState: appState)
         setupStateObserver()
         
         Task {
@@ -66,6 +68,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 self?.updateStatusIcon()
+                switch state {
+                case .recording, .transcribing:
+                    self?.recordingOverlay.show()
+                case .idle, .error:
+                    self?.recordingOverlay.hide()
+                }
             }
             .store(in: &cancellables)
         

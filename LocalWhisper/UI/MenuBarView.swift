@@ -147,23 +147,30 @@ struct MenuBarView: View {
     // MARK: - Last Transcription
     @State private var showCopiedFeedback = false
     
+    @State private var showReinjectedFeedback = false
+
     private var lastTranscriptionSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Last Transcription")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                
+
                 Spacer()
-                
+
                 if showCopiedFeedback {
                     Text("Copied!")
                         .font(.caption)
                         .foregroundColor(.green)
                         .transition(.opacity)
+                } else if showReinjectedFeedback {
+                    Text("Re-injected!")
+                        .font(.caption)
+                        .foregroundColor(.blue)
+                        .transition(.opacity)
                 }
             }
-            
+
             Button(action: copyTranscriptionToClipboard) {
                 Text(appState.lastTranscription)
                     .font(.body)
@@ -175,26 +182,69 @@ struct MenuBarView: View {
             }
             .buttonStyle(.plain)
             .help("Click to copy to clipboard")
-            
-            Text("Click to copy")
-                .font(.caption2)
-                .foregroundColor(.secondary)
+
+            HStack(spacing: 8) {
+                Button {
+                    copyTranscriptionToClipboard()
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+
+                Button {
+                    reinjectLastTranscription()
+                } label: {
+                    Label("Re-inject", systemImage: "arrow.uturn.right.circle")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .help("Type this text into the focused app again")
+
+                Spacer()
+            }
         }
     }
-    
+
     private func copyTranscriptionToClipboard() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(appState.lastTranscription, forType: .string)
-        
+
         withAnimation {
             showCopiedFeedback = true
         }
-        
-        // Hide feedback after 2 seconds
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             withAnimation {
                 showCopiedFeedback = false
+            }
+        }
+    }
+
+    private func reinjectLastTranscription() {
+        let text = appState.lastTranscription
+        guard !text.isEmpty else { return }
+        let useClipboard = appState.useClipboardFallback
+        let simulate = appState.useSimulateKeypresses
+        Task {
+            do {
+                try await appState.textInjectionService.injectText(
+                    text,
+                    useClipboardFallback: useClipboard,
+                    useSimulateKeypresses: simulate
+                )
+                await MainActor.run {
+                    withAnimation { showReinjectedFeedback = true }
+                }
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await MainActor.run {
+                    withAnimation { showReinjectedFeedback = false }
+                }
+            } catch {
+                print("[MenuBar] Re-inject failed: \(error)")
             }
         }
     }

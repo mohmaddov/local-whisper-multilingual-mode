@@ -107,4 +107,57 @@ actor TranscriptionLogService {
         }
         return out
     }
+
+    /// Export a single record as SubRip (.srt) subtitles. Uses per-segment
+    /// timestamps when available, falling back to a single cue for the whole text.
+    nonisolated static func exportAsSRT(_ record: TranscriptionRecord) -> String {
+        let cues = subtitleCues(for: record)
+        var out = ""
+        for (idx, cue) in cues.enumerated() {
+            out += "\(idx + 1)\n"
+            out += "\(srtTimestamp(cue.start)) --> \(srtTimestamp(cue.end))\n"
+            out += "\(cue.text)\n\n"
+        }
+        return out
+    }
+
+    /// Export a single record as WebVTT (.vtt) subtitles.
+    nonisolated static func exportAsVTT(_ record: TranscriptionRecord) -> String {
+        let cues = subtitleCues(for: record)
+        var out = "WEBVTT\n\n"
+        for cue in cues {
+            out += "\(vttTimestamp(cue.start)) --> \(vttTimestamp(cue.end))\n"
+            out += "\(cue.text)\n\n"
+        }
+        return out
+    }
+
+    private struct Cue { let start: Double; let end: Double; let text: String }
+
+    nonisolated private static func subtitleCues(for record: TranscriptionRecord) -> [Cue] {
+        let timed = record.segments.compactMap { seg -> Cue? in
+            guard let s = seg.startSeconds, let e = seg.endSeconds, e > s,
+                  !seg.text.isEmpty else { return nil }
+            return Cue(start: s, end: e, text: seg.text)
+        }
+        if !timed.isEmpty { return timed }
+        // Fallback: single cue spanning the whole recording.
+        return [Cue(start: 0, end: record.durationSeconds, text: record.text)]
+    }
+
+    nonisolated private static func srtTimestamp(_ seconds: Double) -> String {
+        let h = Int(seconds) / 3600
+        let m = (Int(seconds) % 3600) / 60
+        let s = Int(seconds) % 60
+        let ms = Int((seconds - floor(seconds)) * 1000)
+        return String(format: "%02d:%02d:%02d,%03d", h, m, s, ms)
+    }
+
+    nonisolated private static func vttTimestamp(_ seconds: Double) -> String {
+        let h = Int(seconds) / 3600
+        let m = (Int(seconds) % 3600) / 60
+        let s = Int(seconds) % 60
+        let ms = Int((seconds - floor(seconds)) * 1000)
+        return String(format: "%02d:%02d:%02d.%03d", h, m, s, ms)
+    }
 }

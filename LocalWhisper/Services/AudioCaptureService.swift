@@ -6,10 +6,20 @@ actor AudioCaptureService {
     private var audioEngine: AVAudioEngine?
     private var audioBuffers: [Float] = []
     private var isCurrentlyRecording = false
-    
+
     // Whisper requires 16kHz sample rate
     private let targetSampleRate: Double = 16000
-    
+
+    // Live audio level stream (0...1 peak per buffer). Used by the recording overlay.
+    nonisolated let levelStream: AsyncStream<Float>
+    private nonisolated let levelContinuation: AsyncStream<Float>.Continuation
+
+    init() {
+        var continuation: AsyncStream<Float>.Continuation!
+        self.levelStream = AsyncStream { continuation = $0 }
+        self.levelContinuation = continuation
+    }
+
     var isRecording: Bool {
         isCurrentlyRecording
     }
@@ -135,6 +145,15 @@ actor AudioCaptureService {
     private func appendSamples(_ samples: [Float]) {
         guard isCurrentlyRecording else { return }
         audioBuffers.append(contentsOf: samples)
+
+        // Compute peak level (0...1) and publish to the level stream so the
+        // recording overlay can render a live waveform.
+        var peak: Float = 0
+        for s in samples {
+            let abs = s < 0 ? -s : s
+            if abs > peak { peak = abs }
+        }
+        levelContinuation.yield(min(peak, 1.0))
     }
 }
 

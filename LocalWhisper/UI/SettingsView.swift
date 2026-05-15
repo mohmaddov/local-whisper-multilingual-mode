@@ -1,5 +1,6 @@
 import SwiftUI
 import Carbon.HIToolbox
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
@@ -18,8 +19,10 @@ struct SettingsView: View {
                     .tag(3)
                 Label("Logs", systemImage: "doc.text.magnifyingglass")
                     .tag(4)
-                Label("About", systemImage: "info.circle")
+                Label("Stats", systemImage: "chart.bar")
                     .tag(5)
+                Label("About", systemImage: "info.circle")
+                    .tag(6)
             }
             .listStyle(.sidebar)
             .frame(minWidth: 150)
@@ -37,6 +40,8 @@ struct SettingsView: View {
                 case 4:
                     LogsSettingsView()
                 case 5:
+                    StatsSettingsView()
+                case 6:
                     AboutView()
                 default:
                     ModelSettingsView()
@@ -623,13 +628,15 @@ struct VocabularySettingsView: View {
                 .padding()
                 .background(Color.blue.opacity(0.1))
                 .cornerRadius(12)
-                
+
+                DictationCommandsSection()
+
                 Spacer()
             }
             .padding(24)
         }
     }
-    
+
     private func tipRow(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("•")
@@ -655,6 +662,117 @@ struct VocabularySettingsView: View {
         _ = withAnimation {
             appState.customVocabulary.remove(at: index)
         }
+    }
+}
+
+// MARK: - Dictation Commands
+
+struct DictationCommandsSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var newTrigger = ""
+    @State private var newReplacement = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Dictation Commands")
+                    .font(.headline)
+                Spacer()
+                Toggle("", isOn: $appState.dictationCommandsEnabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+
+            Text("Replace spoken phrases with literal characters. Useful for dictating punctuation and newlines that Whisper omits.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            // Add new command
+            HStack(spacing: 8) {
+                TextField("Trigger (e.g. \"new line\")", text: $newTrigger)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(!appState.dictationCommandsEnabled)
+                Text("→")
+                    .foregroundStyle(.secondary)
+                TextField("Replacement", text: $newReplacement)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 120)
+                    .disabled(!appState.dictationCommandsEnabled)
+                Button {
+                    addCommand()
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!appState.dictationCommandsEnabled || newTrigger.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+
+            // List of commands
+            if appState.dictationCommands.isEmpty {
+                Text("No commands. Add one above or restore defaults below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(appState.dictationCommands.enumerated()), id: \.element.id) { idx, _ in
+                        DictationCommandRow(
+                            command: $appState.dictationCommands[idx],
+                            onDelete: {
+                                appState.dictationCommands.remove(at: idx)
+                            }
+                        )
+                        .disabled(!appState.dictationCommandsEnabled)
+                        if idx < appState.dictationCommands.count - 1 {
+                            Divider().padding(.leading, 12)
+                        }
+                    }
+                }
+                .background(Color(nsColor: .controlBackgroundColor))
+                .cornerRadius(10)
+            }
+
+            HStack {
+                Button("Restore Defaults") {
+                    appState.dictationCommands = DictationCommand.defaults
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                Spacer()
+            }
+        }
+    }
+
+    private func addCommand() {
+        let trigger = newTrigger.trimmingCharacters(in: .whitespaces)
+        guard !trigger.isEmpty else { return }
+        let cmd = DictationCommand(trigger: trigger, replacement: newReplacement)
+        appState.dictationCommands.append(cmd)
+        newTrigger = ""
+        newReplacement = ""
+    }
+}
+
+struct DictationCommandRow: View {
+    @Binding var command: DictationCommand
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle("", isOn: $command.enabled).labelsHidden()
+            TextField("Trigger", text: $command.trigger)
+                .textFieldStyle(.plain)
+            Text("→").foregroundStyle(.secondary)
+            TextField("Replacement", text: $command.replacement)
+                .textFieldStyle(.plain)
+                .frame(width: 120)
+            Button(action: onDelete) {
+                Image(systemName: "trash").font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 }
 
@@ -1486,6 +1604,19 @@ struct TranscriptionRow: View {
                 .foregroundStyle(.secondary)
                 .help("Copy text")
 
+                Menu {
+                    Button("Export as .srt") { exportRecord(.srt) }
+                    Button("Export as .vtt") { exportRecord(.vtt) }
+                    Button("Export as .txt") { exportRecord(.txt) }
+                } label: {
+                    Image(systemName: "square.and.arrow.up").font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .foregroundStyle(.secondary)
+                .help("Export this entry")
+
                 Button(action: onDelete) {
                     Image(systemName: "trash").font(.caption)
                 }
@@ -1497,6 +1628,218 @@ struct TranscriptionRow: View {
         .padding(12)
         .background(Color(nsColor: .controlBackgroundColor))
         .cornerRadius(10)
+    }
+
+    private enum ExportFormat { case srt, vtt, txt }
+
+    private func exportRecord(_ format: ExportFormat) {
+        let (content, ext, utType): (String, String, UTType) = {
+            switch format {
+            case .srt: return (TranscriptionLogService.exportAsSRT(record), "srt", .plainText)
+            case .vtt: return (TranscriptionLogService.exportAsVTT(record), "vtt", .plainText)
+            case .txt: return (record.text, "txt", .plainText)
+            }
+        }()
+        let panel = NSSavePanel()
+        let isoDate = ISO8601DateFormatter().string(from: record.timestamp)
+            .replacingOccurrences(of: ":", with: "-")
+        panel.nameFieldStringValue = "transcription-\(isoDate).\(ext)"
+        panel.allowedContentTypes = [utType]
+        if panel.runModal() == .OK, let url = panel.url {
+            try? content.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
+// MARK: - Stats View
+struct StatsSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var records: [TranscriptionRecord] = []
+    @State private var isLoaded = false
+
+    private var totalCount: Int { records.count }
+    private var failedCount: Int { records.filter { $0.errorMessage != nil }.count }
+    private var totalAudioSeconds: Double { records.reduce(0) { $0 + $1.durationSeconds } }
+    private var totalProcessingMs: Int { records.reduce(0) { $0 + $1.processingMs } }
+    private var totalWords: Int {
+        records.reduce(0) { $0 + $1.text.split(separator: " ").count }
+    }
+    private var avgProcessingRatio: Double {
+        guard totalAudioSeconds > 0 else { return 0 }
+        return Double(totalProcessingMs) / 1000.0 / totalAudioSeconds
+    }
+    private var languageBreakdown: [(code: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for r in records {
+            for seg in r.segments {
+                if let lang = seg.language, !lang.isEmpty {
+                    counts[lang, default: 0] += 1
+                }
+            }
+            // Fallback for records without segment-level info
+            if r.segments.isEmpty {
+                for lang in r.detectedLanguages where !lang.isEmpty {
+                    counts[lang, default: 0] += 1
+                }
+            }
+        }
+        return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
+    }
+    private var modelBreakdown: [(name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for r in records { counts[r.modelName, default: 0] += 1 }
+        return counts.sorted { $0.value > $1.value }.map { ($0.key, $0.value) }
+    }
+    private var appBreakdown: [(name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for r in records { counts[r.appContext, default: 0] += 1 }
+        return counts.sorted { $0.value > $1.value }.prefix(8).map { ($0.key, $0.value) }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Statistics")
+                        .font(.title2).fontWeight(.semibold)
+                    Text("Aggregated from your transcription log.")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+
+                if !isLoaded {
+                    ProgressView().frame(maxWidth: .infinity)
+                } else if records.isEmpty {
+                    Text("No transcriptions yet. Make one and come back!")
+                        .foregroundStyle(.secondary)
+                        .padding()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(nsColor: .controlBackgroundColor))
+                        .cornerRadius(12)
+                } else {
+                    // Summary cards
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                        StatCard(title: "Transcriptions", value: "\(totalCount)", icon: "waveform")
+                        StatCard(title: "Total audio", value: formatDuration(totalAudioSeconds), icon: "clock")
+                        StatCard(title: "Total words", value: "\(totalWords)", icon: "text.alignleft")
+                        StatCard(title: "Avg speed", value: avgProcessingRatio > 0 ? String(format: "%.2fx realtime", 1.0 / avgProcessingRatio) : "—", icon: "gauge.medium")
+                        StatCard(title: "Failed", value: "\(failedCount)", icon: "exclamationmark.triangle", tint: failedCount > 0 ? .orange : .green)
+                        StatCard(title: "Languages", value: "\(languageBreakdown.count)", icon: "globe")
+                    }
+
+                    // Language breakdown
+                    if !languageBreakdown.isEmpty {
+                        BreakdownCard(title: "Segments by language", rows: languageBreakdown.map {
+                            BreakdownRow(
+                                label: "\(TranscriptionRecord.languageFlag($0.code)) \(TranscriptionRecord.languageDisplayName($0.code))",
+                                value: "\($0.count)",
+                                fraction: Double($0.count) / Double(max(languageBreakdown.first?.count ?? 1, 1))
+                            )
+                        })
+                    }
+
+                    // Model breakdown
+                    BreakdownCard(title: "Transcriptions by model", rows: modelBreakdown.map {
+                        BreakdownRow(
+                            label: $0.name,
+                            value: "\($0.count)",
+                            fraction: Double($0.count) / Double(max(modelBreakdown.first?.count ?? 1, 1))
+                        )
+                    })
+
+                    // Apps breakdown
+                    if !appBreakdown.isEmpty {
+                        BreakdownCard(title: "Top apps where you transcribed", rows: appBreakdown.map {
+                            BreakdownRow(
+                                label: $0.name,
+                                value: "\($0.count)",
+                                fraction: Double($0.count) / Double(max(appBreakdown.first?.count ?? 1, 1))
+                            )
+                        })
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(24)
+        }
+        .task {
+            await load()
+        }
+    }
+
+    private func load() async {
+        records = await appState.transcriptionLogService.readAll()
+        isLoaded = true
+    }
+
+    private func formatDuration(_ seconds: Double) -> String {
+        let totalSec = Int(seconds)
+        let h = totalSec / 3600
+        let m = (totalSec % 3600) / 60
+        let s = totalSec % 60
+        if h > 0 { return String(format: "%dh %02dm", h, m) }
+        if m > 0 { return String(format: "%dm %02ds", m, s) }
+        return "\(s)s"
+    }
+}
+
+struct StatCard: View {
+    let title: String
+    let value: String
+    let icon: String
+    var tint: Color = .accentColor
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Image(systemName: icon).foregroundStyle(tint)
+                Text(title).font(.caption).foregroundStyle(.secondary)
+            }
+            Text(value).font(.title3).fontWeight(.semibold)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(10)
+    }
+}
+
+struct BreakdownRow {
+    let label: String
+    let value: String
+    let fraction: Double  // 0...1
+}
+
+struct BreakdownCard: View {
+    let title: String
+    let rows: [BreakdownRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            VStack(spacing: 6) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HStack {
+                        Text(row.label).font(.body)
+                        Spacer()
+                        Text(row.value).font(.body).foregroundStyle(.secondary)
+                    }
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.secondary.opacity(0.15))
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.accentColor.opacity(0.6))
+                                .frame(width: geo.size.width * row.fraction)
+                        }
+                    }
+                    .frame(height: 6)
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .cornerRadius(10)
+        }
     }
 }
 

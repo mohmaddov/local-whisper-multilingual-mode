@@ -163,7 +163,13 @@ final class TranscriptionCoordinator: ObservableObject {
             }
 
             logger.info("Transcription [\(outcome.detectedLanguages.joined(separator: ","))] (\(outcome.processingMs)ms): \(outcome.text)")
-            appState.lastTranscription = outcome.text
+
+            // Apply dictation magic words (e.g. "new line" -> \n) before storing & injecting.
+            let processedText: String = {
+                guard appState.dictationCommandsEnabled else { return outcome.text }
+                return DictationCommand.apply(appState.dictationCommands, to: outcome.text)
+            }()
+            appState.lastTranscription = processedText
 
             // Persist rich JSONL record
             if let transcriptionLogService = transcriptionLogService {
@@ -192,10 +198,10 @@ final class TranscriptionCoordinator: ObservableObject {
                 }
             }
 
-            // Inject text
-            if !outcome.text.isEmpty {
+            // Inject text (with dictation rewrite applied).
+            if !processedText.isEmpty {
                 try await textInjectionService.injectText(
-                    outcome.text,
+                    processedText,
                     useClipboardFallback: appState.useClipboardFallback,
                     useSimulateKeypresses: appState.useSimulateKeypresses
                 )
