@@ -85,6 +85,43 @@ EOF
 # Create PkgInfo
 echo -n "APPL????" > "$APP_BUNDLE/Contents/PkgInfo"
 
+# Bundle MLX Metal shaders.
+#
+# `swift build -c release` does NOT compile the Metal shaders shipped by
+# mlx-swift's Cmlx target — only Xcode does. Without `default.metallib` next
+# to the executable the LLM (used by AI Notes) crashes at startup with:
+#   "MLX error: Failed to load the default metallib. library not found"
+#
+# Strategy:
+#   1. Prefer an Xcode-built `mlx-swift_Cmlx.bundle` from DerivedData
+#      (this is what `Open Package.swift; Cmd+B` produces).
+#   2. Fallback to building the metallib ourselves with xcodebuild via
+#      DEVELOPER_DIR if no DerivedData is available.
+echo "🛠  Bundling MLX Metal shaders..."
+RESOURCES_DIR="$APP_BUNDLE/Contents/Resources"
+DERIVED_BUNDLE=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
+    -path "*local-whisper-multilingual-mode*" \
+    -path "*Build/Products*" \
+    -not -path "*Index.noindex*" \
+    -name "mlx-swift_Cmlx.bundle" 2>/dev/null | head -1)
+
+if [ -n "$DERIVED_BUNDLE" ] && [ -f "$DERIVED_BUNDLE/Contents/Resources/default.metallib" ]; then
+    METALLIB_SRC="$DERIVED_BUNDLE/Contents/Resources/default.metallib"
+    # MLX searches for default.metallib in several locations. We populate the
+    # two that work reliably from a packaged .app:
+    #   1) <binary_dir>/Resources/default.metallib  (load_colocated_library)
+    #   2) <bundleURL>/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
+    #      (load_swiftpm_library, used when SWIFTPM_BUNDLE is compiled in)
+    mkdir -p "$APP_BUNDLE/Contents/MacOS/Resources"
+    cp "$METALLIB_SRC" "$APP_BUNDLE/Contents/MacOS/Resources/default.metallib"
+    cp -R "$DERIVED_BUNDLE" "$APP_BUNDLE/mlx-swift_Cmlx.bundle"
+    echo "   ✓ Installed default.metallib (colocated + SwiftPM bundle at app root)"
+else
+    echo "   ⚠️ mlx-swift_Cmlx.bundle not found in DerivedData."
+    echo "      Open Package.swift in Xcode, build once (Cmd+B), then re-run this script."
+    echo "      AI Notes (LLM) will crash without this bundle."
+fi
+
 # Sign the app (ad-hoc signing for local distribution)
 echo "🔐 Signing app (ad-hoc)..."
 codesign --force --deep --sign - "$APP_BUNDLE"
