@@ -5,7 +5,9 @@ set -e
 # Creates a distributable .app bundle and DMG
 
 VERSION="${1:-1.0.0}"
-APP_NAME="LocalWhisper"
+APP_NAME="LocalWisprFlow"
+# Internal SPM target name (do not change; only the user-facing app name was renamed)
+TARGET_NAME="LocalWhisper"
 BUNDLE_ID="com.localwhisper.app"
 
 # Directories
@@ -32,8 +34,8 @@ echo "📁 Creating app bundle..."
 mkdir -p "$APP_BUNDLE/Contents/MacOS"
 mkdir -p "$APP_BUNDLE/Contents/Resources"
 
-# Copy executable
-cp "$BUILD_DIR/LocalWhisper" "$APP_BUNDLE/Contents/MacOS/"
+# Copy executable (rename binary to match the user-facing app name)
+cp "$BUILD_DIR/$TARGET_NAME" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 
 # Copy icon
 if [ -f "$PROJECT_DIR/LocalWhisper/Resources/AppIcon.icns" ]; then
@@ -69,7 +71,7 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << EOF
     <key>LSUIElement</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>LocalWhisper needs microphone access to record audio for voice-to-text transcription.</string>
+    <string>$APP_NAME needs microphone access to record audio for voice-to-text transcription.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>LSApplicationCategoryType</key>

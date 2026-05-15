@@ -45,15 +45,16 @@ struct MenuBarView: View {
     
     // MARK: - Header
     private var headerSection: some View {
-        HStack {
-            Text("🎙️")
+        HStack(spacing: 8) {
+            Image(systemName: "waveform.circle.fill")
                 .font(.title2)
-            
-            Text("LocalWhisper")
-                .font(.headline)
-            
+                .foregroundStyle(.tint)
+
+            Text("LocalWisprFlow")
+                .font(.system(.headline, design: .rounded))
+
             Spacer()
-            
+
             statusBadge
         }
     }

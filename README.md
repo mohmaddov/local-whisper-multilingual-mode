@@ -1,152 +1,111 @@
-# LocalWhisper — Multilingual Mode Fork
+# LocalWisprFlow
 
 <p align="center">
-  <strong>Local voice-to-text for macOS — with seamless multilingual transcription</strong><br>
-  100% offline • Apple Silicon optimized • Menu bar app
+  <strong>On-device voice-to-text and AI note taking for macOS</strong><br>
+  100% offline · Apple Silicon optimized · Menu bar app
 </p>
 
 <p align="center">
   <a href="https://github.com/mohmaddov/local-whisper-multilingual-mode/releases/latest"><img src="https://img.shields.io/github/v/release/mohmaddov/local-whisper-multilingual-mode" alt="Latest Release"></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License">
+  <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-required-black" alt="Apple Silicon">
 </p>
 
 ---
 
-A macOS menu bar app for local speech-to-text powered by [WhisperKit](https://github.com/argmaxinc/WhisperKit). Press a hotkey, speak in **any language (or mix of languages)**, and text appears in any app — no internet required.
+**LocalWisprFlow** is a menu bar app for macOS that turns your voice into text and structured notes — entirely on your device. It combines [WhisperKit](https://github.com/argmaxinc/WhisperKit) for transcription with a local LLM (Qwen / Phi-3.5 via [MLX](https://github.com/ml-explore/mlx)) for AI-generated meeting notes. No cloud. No telemetry. Your audio never leaves your Mac.
 
-> **This is a fork of [t2o2/local-whisper](https://github.com/t2o2/local-whisper)** with added **multilingual mode** — switch languages mid-sentence (like Wispr Flow) and get per-segment language detection in the logs.
+> This project is a fork of [t2o2/local-whisper](https://github.com/t2o2/local-whisper) with a substantially expanded feature set. See **Credits** below.
 
-## ✨ What's new in this fork
+## Highlights
 
-### 🌍 Multilingual mode
-Speak in multiple languages within a single recording — French, Russian, English, Spanish, Chinese, etc. — and each segment is transcribed in its **original language** (Cyrillic stays Cyrillic, French stays French, no forced translation to English).
+- 🌍 **Seamless multilingual dictation** — switch between English, French, Russian, Spanish, Chinese, and more inside a single sentence
+- 🧠 **AI notes** — record a meeting, get a structured markdown note back (Summary · Key Points · Action Items · Decisions)
+- ⌨️ **Global hotkey dictation** — hold a key, speak, release; transcribed text is typed into the focused app
+- 🎚️ **Live recording overlay** — floating panel with waveform while you speak
+- 📊 **History & statistics** — every transcription stored locally with per-segment language detection, processing speed, language breakdown
+- 🎙️ **Dictation commands** — say "new line", "period", "question mark" and they become the actual characters
+- 🔇 **Mute system output while recording** — prevent feedback from speakers
+- 🌐 **Proxy support** — HTTP / HTTPS / SOCKS5 for model downloads behind firewalls
+- 🔄 **Hot-swap models** — switch between Whisper / LLM models without losing the current one (downloads in the background)
+- 📤 **Export** — `.srt`, `.vtt`, `.txt` for transcripts; `.md` for AI notes
 
-- **VAD-based segmentation** — silence detection splits your speech into independent regions
-- **Per-segment language detection** — each region is analyzed independently to avoid language bias from previous chunks
-- **Faithful transcription** — Russian → Cyrillic, Arabic → Arabic, Chinese → 中文 (no auto-translation)
+## Install
 
-Example output mixing French and Russian in one recording:
-> 🇫🇷 *Je m'appelle Hugo et j'ai 16 ans.*
-> 🇫🇷 *Ma sœur s'appelle Laura.*
-> 🇷🇺 *Знакомьтесь, это Татьяна, моя учительница русского языка.*
-> 🇫🇷 *Nous sommes à l'aéroport, direction Barcelone en Espagne.*
-> 🇷🇺 *Она встает в 7 утра и едет в школу на машине.*
-
-### 📊 Rich transcription logs
-A new **Logs** tab in Settings shows every transcription with:
-- Detected language(s) with flag emojis 🇫🇷 🇷🇺 🇬🇧 🇪🇸 🇨🇳 ...
-- Per-segment language breakdown with timestamps
-- Processing time, duration, model used, app context
-- Search + filter by language
-- Export to plain text
-
-All records are stored as JSONL at `~/Documents/LocalWhisper/transcriptions.jsonl`.
-
-### 🔇 Mute system audio while recording
-Optional toggle to mute speakers during recording so your microphone doesn't pick up speaker audio.
-
-### 🌐 Proxy support
-HTTP / HTTPS / SOCKS5 proxy configuration for model downloads behind corporate firewalls.
-
-### 🛠 Misc fixes
-- Recovery from stale audio state (prevents "Recording is already in progress" lockup after a crash or Xcode forced stop)
-- Improved error logging at `~/Library/Logs/LocalWhisper/errors.log`
-
-## Quick Start
-
-### Install (Recommended)
+### From a release (recommended)
 
 1. Download the latest `.dmg` from [GitHub Releases](https://github.com/mohmaddov/local-whisper-multilingual-mode/releases/latest)
-2. Open the DMG and drag **LocalWhisper** to your Applications folder
-3. Open LocalWhisper from Applications
+2. Open the DMG, drag **LocalWisprFlow** to your Applications folder
+3. Right-click the app and choose **Open** the first time (the app is ad-hoc signed; macOS will otherwise refuse to launch it)
 4. Grant **Microphone** and **Accessibility** permissions when prompted
 
-> **Note**: On first launch, macOS may show "unidentified developer" warning (the app is ad-hoc signed). Right-click the app and select "Open" to bypass, or go to System Settings → Privacy & Security → "Open Anyway".
-
-### Install from source
+### From source
 
 ```bash
 git clone https://github.com/mohmaddov/local-whisper-multilingual-mode.git
 cd local-whisper-multilingual-mode
-swift build -c release && swift run
+swift run
 ```
 
-### Build your own .dmg
+### Build your own `.dmg`
 
 ```bash
-./scripts/release.sh 1.1.0
+./scripts/release.sh 1.2.0
 ```
 
-Outputs `.app`, `.dmg`, and `.zip` into `dist/`.
+Outputs `LocalWisprFlow.app`, `LocalWisprFlow-1.2.0.dmg`, and `LocalWisprFlow-1.2.0.zip` to `dist/`.
 
-### Use
+## Usage
 
-1. Grant **Microphone** and **Accessibility** permissions when prompted
-2. **Hold** your shortcut key (default: `Ctrl+Shift+Space`) to start recording
-3. Speak — switch languages freely if multilingual mode is enabled
-4. **Release** to stop recording and transcribe
+### Dictation (push-to-talk)
 
-Text is automatically typed into your focused app.
+1. **Hold** the configured shortcut (default `Ctrl+Shift+Space`)
+2. Speak — switch languages freely if Multilingual Mode is on
+3. **Release** to stop and transcribe; text is auto-inserted into the focused application
 
-## Features
+### AI Notes (long-form)
 
-- 🌍 **Multilingual mode** — Speak multiple languages in one recording with per-segment detection
-- 🎤 **Global Hotkey** — Hold to record, release to transcribe (default: `Ctrl+Shift+Space`)
-- 🔒 **100% Offline** — All processing on-device, no data leaves your Mac
-- ⚡ **Fast** — CoreML + Neural Engine acceleration on Apple Silicon
-- 📝 **Auto-inject** — Transcribed text typed directly into focused field
-- 📖 **Custom Dictionary** — Add words/names for accurate transcription of technical terms, proper nouns, etc.
-- 📊 **Rich logs** — Per-segment language detection, JSONL storage, search & export
-- 🔇 **Mute system audio** — Avoid feedback while recording
-- 🌐 **Proxy support** — HTTP / HTTPS / SOCKS5 for model downloads
+1. Click the menu bar icon → **New Recording** (or open Settings → Notes)
+2. Speak for as long as you need (meetings, interviews, brainstorms)
+3. Press **Stop**; the app transcribes the audio, then summarizes it into a structured markdown note
+4. Browse notes in the **Notes** tab, edit titles inline, toggle between Summary and Transcript views, and export to `.md`
 
 ## Requirements
 
-- macOS 14.0+ (Sonoma)
-- Apple Silicon (M1/M2/M3/M4)
-- 8GB RAM minimum (16GB+ for large models)
+- macOS 14 (Sonoma) or later
+- Apple Silicon (M1 / M2 / M3 / M4)
+- 8 GB RAM minimum (16 GB+ recommended for Large Whisper and Phi-3.5 LLM)
 
-## Configuration
+## Recommended models
 
-Click the menu bar icon → **Settings** to:
-- Toggle **Multilingual Mode** (auto-detect language per segment)
-- Change keyboard shortcut
-- Select transcription model (tiny → large-v3)
-- Add custom vocabulary (product names, technical terms, proper nouns)
-- View transcription logs with per-segment language breakdown
-- Configure proxy
-
-### Multilingual Mode tips
-
-- Works best with `medium` or `large-v3` models — smaller models have weaker language detection
-- Each speech region needs to be at least ~0.5s for reliable detection
-- Mixing 2–3 languages in one recording works well; very rapid code-switching within a single sentence may merge segments
-
-### Custom Dictionary
-
-Add words you want transcribed correctly in Settings → Vocabulary. This helps the model recognize:
-- Product names (e.g., "WhisperKit", "CoreML")
-- Technical terms (e.g., "Kubernetes", "PostgreSQL")
-- Proper nouns (names of people, places, companies)
-
-## Documentation
-
-- [Model Guide](docs/models.md) — Model comparison, benchmarks, recommendations
-- [Architecture](docs/architecture.md) — Project structure, development guide
+| Use case | Whisper | LLM (Notes) |
+|---|---|---|
+| Day-to-day dictation | Medium | Qwen 0.5B |
+| Professional note taking | Large v3 Turbo | Phi-3.5 Mini |
+| Low-end Mac | Distil Large v3 Turbo | Qwen 0.5B |
 
 ## Privacy
 
-All transcription happens locally. No audio is sent over the network. No analytics or telemetry.
+LocalWisprFlow runs entirely on your device. There is no telemetry, no analytics, no cloud calls. Models are downloaded from Hugging Face once and cached at `~/Documents/huggingface/`. Transcriptions and notes are stored at `~/Documents/LocalWhisper/`.
+
+## Documentation
+
+- [Model Guide](docs/models.md) — model comparison and recommendations
+- [Architecture](docs/architecture.md) — project structure for contributors
 
 ## License
 
-MIT
+MIT.
 
-## 🙏 Acknowledgments
+## Credits
 
-This project would not exist without the incredible work of:
+This fork is built and maintained by **[mohmaddov](https://github.com/mohmaddov)** — added multilingual mode, AI notes, recording overlay, statistics, hot-swap models, and the LocalWisprFlow UI redesign.
 
-- **[t2o2](https://github.com/t2o2)** — Creator of the original [local-whisper](https://github.com/t2o2/local-whisper) project. The entire architecture, menu bar app, hotkey handling, text injection, and overall UX of LocalWhisper is their work. This fork only adds multilingual capabilities on top of their solid foundation. **Huge thanks!** 🚀
-- **[WhisperKit](https://github.com/argmaxinc/WhisperKit)** by Argmax — Swift Whisper with CoreML acceleration
-- **[KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts)** by Sindre Sorhus — Global hotkeys
-- **[OpenAI Whisper](https://github.com/openai/whisper)** — The original speech recognition model
+The project would not exist without:
+
+- **[t2o2](https://github.com/t2o2)** — author of the original [LocalWhisper](https://github.com/t2o2/local-whisper). The menu bar app, hotkey infrastructure, text injection, model loading and overall architecture are their work. **Massive thanks.**
+- **[WhisperKit](https://github.com/argmaxinc/WhisperKit)** by Argmax — Swift bindings to OpenAI Whisper with CoreML acceleration
+- **[MLX](https://github.com/ml-explore/mlx)** & **[MLX-LM](https://github.com/ml-explore/mlx-swift-lm)** by Apple — on-device LLM inference
+- **[OpenAI Whisper](https://github.com/openai/whisper)** — the original speech-recognition model
+- **[KeyboardShortcuts](https://github.com/sindresorhus/KeyboardShortcuts)** by Sindre Sorhus — global hotkey handling

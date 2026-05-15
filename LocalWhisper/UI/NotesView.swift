@@ -7,6 +7,8 @@ struct NotesSettingsView: View {
     @State private var selection: Note.ID?
     @State private var search: String = ""
     @State private var loaded = false
+    @State private var editingTitle: Bool = false
+    @State private var draftTitle: String = ""
 
     private var filtered: [Note] {
         guard !search.isEmpty else { return notes }
@@ -18,88 +20,176 @@ struct NotesSettingsView: View {
         }
     }
 
+    private var sections: [NoteDateSection] {
+        NoteDateSection.group(filtered)
+    }
+
     var body: some View {
         HSplitView {
             sidebar
-                .frame(minWidth: 240, idealWidth: 280, maxWidth: 360)
+                .frame(minWidth: 260, idealWidth: 300, maxWidth: 380)
             detail
-                .frame(minWidth: 400)
+                .frame(minWidth: 420)
         }
         .task {
             if !loaded { await refresh() }
         }
         .onChange(of: appState.noteState) { _, newValue in
-            // Auto-refresh once a note finishes processing.
             if newValue == .idle {
                 Task { await refresh() }
             }
         }
     }
 
+    // MARK: - Sidebar
+
     private var sidebar: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search", text: $search)
-                    .textFieldStyle(.plain)
+            // Toolbar: record button + search
+            VStack(spacing: 10) {
+                recordButton
+                searchField
             }
-            .padding(8)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .cornerRadius(8)
-            .padding([.horizontal, .top], 12)
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 10)
 
+            Divider()
+
+            // List of notes grouped by date
             if !loaded {
                 Spacer()
                 ProgressView()
                 Spacer()
             } else if filtered.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "note.text")
-                        .font(.largeTitle)
-                        .foregroundStyle(.secondary)
-                    Text(notes.isEmpty ? "No notes yet" : "No matches")
-                        .foregroundStyle(.secondary)
-                    if notes.isEmpty {
-                        Text("Use the menu bar to start a note recording.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
+                emptySidebarPlaceholder
+            } else {
+                List(selection: $selection) {
+                    ForEach(sections) { section in
+                        Section(section.title) {
+                            ForEach(section.notes) { note in
+                                NoteRow(note: note, isSelected: selection == note.id)
+                                    .tag(note.id)
+                            }
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List(filtered, selection: $selection) { note in
-                    NoteRow(note: note)
-                        .tag(note.id)
-                }
                 .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
             }
 
             Divider()
 
-            HStack(spacing: 8) {
-                Button {
-                    Task { await refresh() }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
+            // Footer: open folder
+            HStack {
                 Button {
                     NSWorkspace.shared.open(NoteService.folderURL)
                 } label: {
                     Image(systemName: "folder")
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Open notes folder")
+
                 Spacer()
-                if appState.noteState.isBusy {
-                    HStack(spacing: 4) {
-                        ProgressView().scaleEffect(0.5)
-                        Text(appState.noteState.description).font(.caption2)
-                    }
-                }
+
+                Text("\(notes.count) note\(notes.count == 1 ? "" : "s")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .padding(8)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+        }
+        .background(.background)
+    }
+
+    @ViewBuilder
+    private var recordButton: some View {
+        switch appState.noteState {
+        case .idle, .error:
+            Button {
+                Task { await appState.coordinator.startNoteRecording() }
+            } label: {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(.red)
+                        .frame(width: 9, height: 9)
+                    Text("New Recording")
+                        .fontWeight(.medium)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+
+        case .recording:
+            Button {
+                Task { await appState.coordinator.stopNoteRecording() }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "stop.fill")
+                    Text("Stop · \(formatElapsed(appState.noteElapsedSeconds))")
+                        .fontWeight(.medium)
+                        .monospacedDigit()
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .tint(.red)
+
+        case .transcribing, .summarizing:
+            HStack(spacing: 8) {
+                ProgressView().scaleEffect(0.7)
+                Text(appState.noteState.description)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
         }
     }
+
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField("Search", text: $search)
+                .textFieldStyle(.plain)
+            if !search.isEmpty {
+                Button {
+                    search = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var emptySidebarPlaceholder: some View {
+        VStack(spacing: 8) {
+            Spacer()
+            Image(systemName: "note.text")
+                .font(.title)
+                .foregroundStyle(.tertiary)
+            Text(notes.isEmpty ? "No notes yet" : "No matches")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Detail
 
     @ViewBuilder
     private var detail: some View {
@@ -110,18 +200,28 @@ struct NotesSettingsView: View {
                     await refresh()
                     selection = nil
                 }
+            }, onRename: { newTitle in
+                var updated = note
+                updated.title = newTitle
+                Task {
+                    await appState.noteService.update(updated)
+                    await refresh()
+                }
             })
+            .id(note.id)
         } else if notes.isEmpty {
             EmptyNotesPlaceholder()
         } else {
-            VStack {
-                Image(systemName: "note.text")
-                    .font(.largeTitle)
-                    .foregroundStyle(.secondary)
+            VStack(spacing: 10) {
+                Image(systemName: "doc.text")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.tertiary)
                 Text("Select a note")
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(.background)
         }
     }
 
@@ -129,80 +229,131 @@ struct NotesSettingsView: View {
         notes = await appState.noteService.readAll()
         loaded = true
     }
-}
 
-struct EmptyNotesPlaceholder: View {
-    @EnvironmentObject var appState: AppState
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "note.text.badge.plus")
-                .font(.system(size: 50))
-                .foregroundStyle(.tint)
-
-            Text("AI Notes")
-                .font(.title)
-                .fontWeight(.semibold)
-
-            VStack(spacing: 8) {
-                Text("Record long-form audio (meetings, interviews, ideas) and let the local LLM build a structured note for you.")
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 380)
-
-                Text("Open the menu bar icon and press **Start Note**.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func formatElapsed(_ seconds: TimeInterval) -> String {
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
     }
 }
+
+// MARK: - Date grouping
+
+struct NoteDateSection: Identifiable {
+    let id: String
+    let title: String
+    let notes: [Note]
+
+    static func group(_ notes: [Note]) -> [NoteDateSection] {
+        let cal = Calendar.current
+        let now = Date()
+        let today = cal.startOfDay(for: now)
+        guard let yesterday = cal.date(byAdding: .day, value: -1, to: today),
+              let weekAgo = cal.date(byAdding: .day, value: -7, to: today),
+              let monthAgo = cal.date(byAdding: .day, value: -30, to: today)
+        else { return [NoteDateSection(id: "all", title: "All", notes: notes)] }
+
+        var todayNotes: [Note] = []
+        var yesterdayNotes: [Note] = []
+        var weekNotes: [Note] = []
+        var monthNotes: [Note] = []
+        var olderNotes: [Note] = []
+        for n in notes {
+            if n.timestamp >= today {
+                todayNotes.append(n)
+            } else if n.timestamp >= yesterday {
+                yesterdayNotes.append(n)
+            } else if n.timestamp >= weekAgo {
+                weekNotes.append(n)
+            } else if n.timestamp >= monthAgo {
+                monthNotes.append(n)
+            } else {
+                olderNotes.append(n)
+            }
+        }
+        var sections: [NoteDateSection] = []
+        if !todayNotes.isEmpty { sections.append(.init(id: "today", title: "Today", notes: todayNotes)) }
+        if !yesterdayNotes.isEmpty { sections.append(.init(id: "yesterday", title: "Yesterday", notes: yesterdayNotes)) }
+        if !weekNotes.isEmpty { sections.append(.init(id: "week", title: "Previous 7 Days", notes: weekNotes)) }
+        if !monthNotes.isEmpty { sections.append(.init(id: "month", title: "Previous 30 Days", notes: monthNotes)) }
+        if !olderNotes.isEmpty { sections.append(.init(id: "older", title: "Earlier", notes: olderNotes)) }
+        return sections
+    }
+}
+
+// MARK: - Sidebar row
 
 struct NoteRow: View {
     let note: Note
+    let isSelected: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(note.title)
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Spacer()
-                if !note.llmSucceeded {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .help("AI summary unavailable — raw transcription only")
-                }
-            }
+        VStack(alignment: .leading, spacing: 3) {
+            Text(note.title)
+                .font(.callout)
+                .fontWeight(.medium)
+                .lineLimit(1)
             HStack(spacing: 6) {
-                Text(formattedDate)
+                Text(timeLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text("·").foregroundStyle(.secondary)
-                Text(formattedDuration)
+                Text("·")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text(snippet)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            HStack(spacing: 4) {
+                Text(durationLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
                 if !note.detectedLanguages.isEmpty {
-                    Text("·").foregroundStyle(.secondary)
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                     Text(note.detectedLanguages.map { TranscriptionRecord.languageFlag($0) }.joined())
-                        .font(.caption)
+                        .font(.caption2)
+                }
+                if !note.llmSucceeded {
+                    Text("·")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("No AI summary")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
                 }
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 3)
     }
 
-    private var formattedDate: String {
+    private var timeLabel: String {
         let df = DateFormatter()
-        df.dateStyle = .short
+        df.dateStyle = .none
         df.timeStyle = .short
+        let cal = Calendar.current
+        if cal.isDateInToday(note.timestamp) || cal.isDateInYesterday(note.timestamp) {
+            return df.string(from: note.timestamp)
+        }
+        df.dateStyle = .short
         return df.string(from: note.timestamp)
     }
 
-    private var formattedDuration: String {
+    private var snippet: String {
+        let body = note.markdown
+            .replacingOccurrences(of: "#", with: "")
+            .replacingOccurrences(of: "*", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        if body.isEmpty { return note.rawTranscription }
+        return body
+    }
+
+    private var durationLabel: String {
         let total = Int(note.durationSeconds)
         let m = total / 60
         let s = total % 60
@@ -211,93 +362,197 @@ struct NoteRow: View {
     }
 }
 
+// MARK: - Empty placeholder
+
+struct EmptyNotesPlaceholder: View {
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "note.text.badge.plus")
+                .font(.system(size: 60))
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+
+            Text("AI Notes")
+                .font(.system(.title, design: .rounded))
+                .fontWeight(.semibold)
+
+            Text("Record meetings, interviews, or thoughts.\nThe local LLM transforms your audio into a clean, structured note.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: 420)
+
+            Text("Click **New Recording** in the sidebar to begin.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.top, 4)
+        }
+        .padding(40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.background)
+    }
+}
+
+// MARK: - Note Detail
+
 struct NoteDetailView: View {
     let note: Note
     let onDelete: () -> Void
-    @EnvironmentObject var appState: AppState
+    let onRename: (String) -> Void
+
     @State private var showRaw = false
     @State private var showCopied = false
+    @State private var editingTitle = false
+    @State private var titleDraft = ""
+    @State private var confirmDelete = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Header
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(note.title)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                    HStack(spacing: 8) {
-                        Label(formattedDate, systemImage: "calendar")
-                        Label(formattedDuration, systemImage: "clock")
-                        if !note.detectedLanguages.isEmpty {
-                            Text(note.detectedLanguages.map { TranscriptionRecord.languageFlag($0) }.joined())
-                        }
-                        if let llm = note.llmModel {
-                            Label(llm.split(separator: "/").last.map(String.init) ?? llm, systemImage: "brain")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 0) {
+            // Toolbar
+            HStack(spacing: 8) {
+                Spacer()
+
+                viewToggle
+
+                Divider().frame(height: 16)
+
+                Button {
+                    copy()
+                } label: {
+                    Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                 }
+                .buttonStyle(.plain)
+                .help(showCopied ? "Copied" : "Copy")
 
-                // Actions
-                HStack(spacing: 8) {
-                    Button {
-                        copyToClipboard(showRaw ? note.rawTranscription : note.markdown)
-                    } label: {
-                        Label(showCopied ? "Copied!" : "Copy", systemImage: "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Button {
-                        exportMarkdown()
-                    } label: {
-                        Label("Export .md", systemImage: "square.and.arrow.up")
-                    }
-                    .buttonStyle(.bordered)
-
-                    Toggle(isOn: $showRaw) {
-                        Text("Raw transcription")
-                    }
-                    .toggleStyle(.button)
-                    .controlSize(.small)
-
-                    Spacer()
-
-                    Button(role: .destructive) {
-                        onDelete()
-                    } label: {
-                        Label("Delete", systemImage: "trash")
-                    }
-                    .buttonStyle(.bordered)
+                Button {
+                    exportMarkdown()
+                } label: {
+                    Image(systemName: "square.and.arrow.up")
                 }
+                .buttonStyle(.plain)
+                .help("Export markdown")
 
-                Divider()
-
-                // Content
-                if showRaw {
-                    Text(note.rawTranscription)
-                        .font(.body)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    // Render markdown via SwiftUI's built-in support (macOS 12+).
-                    MarkdownRendered(text: note.markdown)
+                Button(role: .destructive) {
+                    confirmDelete = true
+                } label: {
+                    Image(systemName: "trash")
                 }
-
-                Spacer(minLength: 40)
+                .buttonStyle(.plain)
+                .help("Delete")
             }
-            .padding(24)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .background(.bar)
+
+            Divider()
+
+            // Content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    titleHeader
+                    metadataLine
+                    Divider()
+
+                    if showRaw {
+                        Text(note.rawTranscription)
+                            .font(.system(.body, design: .serif))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        MarkdownRendered(text: note.markdown)
+                    }
+
+                    Spacer(minLength: 80)
+                }
+                .padding(.horizontal, 36)
+                .padding(.vertical, 24)
+                .frame(maxWidth: 760, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(.background)
+        }
+        .confirmationDialog(
+            "Delete this note?",
+            isPresented: $confirmDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) { onDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This action cannot be undone.")
         }
     }
 
-    private func copyToClipboard(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        showCopied = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-            showCopied = false
+    private var viewToggle: some View {
+        Picker("", selection: $showRaw) {
+            Text("Summary").tag(false)
+            Text("Transcript").tag(true)
         }
+        .pickerStyle(.segmented)
+        .frame(width: 200)
+    }
+
+    @ViewBuilder
+    private var titleHeader: some View {
+        if editingTitle {
+            HStack {
+                TextField("Title", text: $titleDraft, onCommit: commitTitle)
+                    .font(.system(.title, design: .rounded).weight(.semibold))
+                    .textFieldStyle(.plain)
+                Button("Save", action: commitTitle).keyboardShortcut(.return, modifiers: [])
+                Button("Cancel") { editingTitle = false }
+            }
+        } else {
+            HStack {
+                Text(note.title)
+                    .font(.system(.title, design: .rounded).weight(.semibold))
+                    .textSelection(.enabled)
+                Spacer()
+                Button {
+                    titleDraft = note.title
+                    editingTitle = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Rename")
+            }
+        }
+    }
+
+    private var metadataLine: some View {
+        HStack(spacing: 12) {
+            Label(formattedDate, systemImage: "calendar")
+            Label(formattedDuration, systemImage: "clock")
+            if !note.detectedLanguages.isEmpty {
+                Text(note.detectedLanguages.map { TranscriptionRecord.languageFlag($0) }.joined())
+            }
+            if let llm = note.llmModel {
+                Label(shortLLM(llm), systemImage: "brain")
+            }
+            if !note.llmSucceeded {
+                Label("No AI summary", systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+            }
+            Spacer()
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    }
+
+    private func commitTitle() {
+        let cleaned = titleDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleaned.isEmpty, cleaned != note.title {
+            onRename(cleaned)
+        }
+        editingTitle = false
+    }
+
+    private func copy() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(showRaw ? note.rawTranscription : note.markdown, forType: .string)
+        showCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { showCopied = false }
     }
 
     private func exportMarkdown() {
@@ -320,6 +575,10 @@ struct NoteDetailView: View {
             .description
     }
 
+    private func shortLLM(_ id: String) -> String {
+        String(id.split(separator: "/").last ?? Substring(id))
+    }
+
     private var formattedDate: String {
         let df = DateFormatter()
         df.dateStyle = .medium
@@ -338,38 +597,45 @@ struct NoteDetailView: View {
     }
 }
 
-/// Render a markdown string with headings, bullets, and emphasis using
-/// SwiftUI's AttributedString markdown support.
+/// Lightweight markdown renderer with Apple-style typography.
 struct MarkdownRendered: View {
     let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(blocks, id: \.self) { block in
                 switch block.kind {
                 case .h1:
-                    Text(block.text).font(.title2).fontWeight(.bold).padding(.top, 6)
+                    Text(block.text)
+                        .font(.system(.title, design: .rounded).weight(.semibold))
+                        .padding(.top, 10)
                 case .h2:
-                    Text(block.text).font(.title3).fontWeight(.semibold).padding(.top, 4)
+                    Text(block.text)
+                        .font(.system(.title3, design: .rounded).weight(.semibold))
+                        .padding(.top, 8)
                 case .h3:
-                    Text(block.text).font(.headline).padding(.top, 2)
+                    Text(block.text)
+                        .font(.headline)
+                        .padding(.top, 4)
                 case .bullet:
-                    HStack(alignment: .top, spacing: 6) {
-                        Text("•").foregroundStyle(.tint)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•").foregroundStyle(.tertiary)
                         inlineMarkdown(block.text)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 case .quote:
-                    HStack(alignment: .top, spacing: 8) {
-                        Rectangle().fill(Color.secondary.opacity(0.5)).frame(width: 3)
+                    HStack(alignment: .top, spacing: 10) {
+                        Rectangle().fill(Color.secondary.opacity(0.4)).frame(width: 3)
                         inlineMarkdown(block.text)
                             .foregroundStyle(.secondary)
+                            .italic()
                     }
                 case .paragraph:
                     inlineMarkdown(block.text)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineSpacing(3)
                 case .blank:
-                    Color.clear.frame(height: 4)
+                    Color.clear.frame(height: 2)
                 }
             }
         }

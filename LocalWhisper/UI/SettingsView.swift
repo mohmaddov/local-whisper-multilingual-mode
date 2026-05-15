@@ -19,7 +19,7 @@ struct SettingsView: View {
                     .tag(3)
                 Label("Notes", systemImage: "note.text")
                     .tag(4)
-                Label("Logs", systemImage: "doc.text.magnifyingglass")
+                Label("History", systemImage: "clock.arrow.circlepath")
                     .tag(5)
                 Label("Stats", systemImage: "chart.bar")
                     .tag(6)
@@ -79,10 +79,10 @@ struct ModelSettingsView: View {
             VStack(alignment: .leading, spacing: 24) {
                 // Header
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Whisper Model")
+                    Text("Transcription Model")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Choose a model based on your needs. Larger models are more accurate but slower.")
+                    Text("Models run entirely on your Mac via Apple Silicon's Neural Engine. Larger models produce more accurate transcripts but take longer to process.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -158,7 +158,7 @@ struct ModelSettingsView: View {
                     Toggle(isOn: $appState.multilingualMode) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Multilingual mode")
-                            Text("Detects the language every 5 seconds — switch between English, French, Russian or any language mid-sentence.")
+                            Text("Detects the spoken language for each segment, so you can switch languages mid-recording. Disable to lock to a single language for faster, more reliable results.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -193,8 +193,8 @@ struct ModelSettingsView: View {
                     
                     Toggle(isOn: $appState.muteAudioWhileRecording) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Mute speakers while recording")
-                            Text("Prevents the microphone from picking up audio playing from your speakers")
+                            Text("Mute output while recording")
+                            Text("Silences system audio output during capture so the microphone doesn't pick up sound from your speakers. Audio is restored when the recording ends.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -212,8 +212,8 @@ struct ModelSettingsView: View {
                     
                     Toggle(isOn: $appState.useSimulateKeypresses) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Simulate keypresses")
-                            Text("Types each character individually instead of pasting. Useful for apps that don't support Cmd+V (e.g., Emacs, terminals).")
+                            Text("Type character by character")
+                            Text("Inserts transcribed text by simulating individual keystrokes instead of pasting. Slower, but works in apps that block ⌘V (some terminals, security-sensitive fields, Emacs).")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -226,11 +226,11 @@ struct ModelSettingsView: View {
 
                 // Cache & Maintenance
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Model Cache")
+                    Text("Storage & Maintenance")
                         .font(.headline)
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Models are downloaded from HuggingFace and cached locally. Use these tools to manage them.")
+                        Text("Models are downloaded once from Hugging Face and cached locally. Use these controls to inspect the cache or force a fresh download if a model becomes corrupted.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
@@ -334,7 +334,7 @@ struct LLMModelSection: View {
                 }
             }
 
-            Text("Local LLM used to turn long voice recordings into structured notes. Larger = better summaries but slower.")
+            Text("On-device language model that turns your recordings into structured notes (title, summary, key points, action items). Larger models produce noticeably better summaries; Phi-3.5 Mini is recommended for professional use.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -702,7 +702,7 @@ struct VocabularySettingsView: View {
                     Text("Custom Vocabulary")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Add words or phrases to improve transcription accuracy for names, technical terms, or domain-specific vocabulary.")
+                    Text("Spelling hints for proper nouns, brand names, and technical terms. Whisper will favor these spellings when uncertain. Works best with the Medium and Large models.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -844,7 +844,7 @@ struct DictationCommandsSection: View {
                     .labelsHidden()
             }
 
-            Text("Replace spoken phrases with literal characters. Useful for dictating punctuation and newlines that Whisper omits.")
+            Text("Substitute spoken phrases for symbols that Whisper rarely transcribes. Say \"new line\" to insert a line break, \"period\" to insert a full stop, and so on. Edit or extend the list below.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
 
@@ -951,7 +951,7 @@ struct ShortcutSettingsView: View {
                     Text("Keyboard Shortcuts")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Configure how you trigger voice transcription.")
+                    Text("Press and hold the shortcut to dictate; release to insert the transcribed text into the focused application.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1341,7 +1341,7 @@ struct PermissionsSettingsView: View {
                     Text("Permissions")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("LocalWhisper needs these permissions to work properly.")
+                    Text("LocalWisprFlow needs these permissions to capture audio and inject text into other apps.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1352,20 +1352,20 @@ struct PermissionsSettingsView: View {
                         icon: "mic.fill",
                         iconColor: .red,
                         title: "Microphone",
-                        description: "Required to capture your voice for transcription",
+                        description: "Captures audio for on-device transcription. Audio is processed locally and never leaves your Mac.",
                         isGranted: appState.permissionsService.microphoneGranted
                     ) {
                         appState.permissionsService.openMicrophoneSettings()
                     }
-                    
+
                     Divider()
                         .padding(.leading, 56)
-                    
+
                     PermissionRow(
                         icon: "accessibility",
                         iconColor: .blue,
                         title: "Accessibility",
-                        description: "Required for global shortcuts and auto-paste",
+                        description: "Enables global keyboard shortcuts and lets the app insert transcribed text into the focused application.",
                         isGranted: appState.permissionsService.accessibilityGranted
                     ) {
                         appState.permissionsService.requestAccessibilityPermission()
@@ -1462,10 +1462,10 @@ struct LogsSettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Logs")
+                    Text("History")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Inspect transcription history (with detected languages) and runtime errors.")
+                    Text("Every dictation is recorded here with its detected languages, processing time, and the application that received the text. Notes are stored separately in the Notes tab.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -1863,7 +1863,7 @@ struct StatsSettingsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Statistics")
                         .font(.title2).fontWeight(.semibold)
-                    Text("Aggregated from your transcription log.")
+                    Text("Aggregated metrics from your local transcription history. Numbers update as new transcriptions are added.")
                         .font(.subheadline).foregroundStyle(.secondary)
                 }
 
@@ -2007,67 +2007,73 @@ struct BreakdownCard: View {
 // MARK: - About View
 struct AboutView: View {
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            
-            // App icon
-            ZStack {
-                Circle()
-                    .fill(LinearGradient(
-                        colors: [.blue, .purple],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ))
-                    .frame(width: 100, height: 100)
-                
-                Image(systemName: "waveform")
-                    .font(.system(size: 44))
-                    .foregroundStyle(.white)
-            }
-            
-            // App name and version
-            VStack(spacing: 4) {
-                Text("LocalWhisper")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                
-                Text("Version 1.0.0")
-                    .font(.caption)
+        ScrollView {
+            VStack(spacing: 28) {
+                Spacer().frame(height: 20)
+
+                Image(systemName: "waveform.circle.fill")
+                    .font(.system(size: 84))
+                    .foregroundStyle(.tint)
+
+                VStack(spacing: 6) {
+                    Text("LocalWisprFlow")
+                        .font(.system(.largeTitle, design: .rounded))
+                        .fontWeight(.semibold)
+                    Text("Version 1.2.0")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("On-device voice-to-text and AI note taking for macOS.\nYour audio never leaves your Mac.")
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
-            }
-            
-            // Description
-            Text("Local voice-to-text transcription\npowered by WhisperKit")
-                .font(.body)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            
-            // Privacy badge
-            HStack(spacing: 8) {
-                Image(systemName: "lock.shield.fill")
-                    .foregroundStyle(.green)
-                Text("100% Offline • Your audio never leaves your device")
-                    .font(.caption)
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color.green.opacity(0.1))
-            .cornerRadius(20)
-            
-            Spacer()
-            
-            // Credits
-            VStack(spacing: 4) {
-                Text("Built with WhisperKit by Argmax")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                
-                Text("© 2024 LocalWhisper")
+                    .frame(maxWidth: 420)
+
+                Divider().frame(maxWidth: 320)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    creditRow(role: "Multilingual fork & AI Notes", name: "mohmaddov", link: "https://github.com/mohmaddov")
+                    creditRow(role: "Original LocalWhisper", name: "t2o2", link: "https://github.com/t2o2/local-whisper")
+                    creditRow(role: "WhisperKit engine", name: "Argmax", link: "https://github.com/argmaxinc/WhisperKit")
+                    creditRow(role: "Whisper model", name: "OpenAI", link: "https://github.com/openai/whisper")
+                    creditRow(role: "MLX framework", name: "Apple", link: "https://github.com/ml-explore/mlx")
+                }
+                .padding(.horizontal, 40)
+
+                Divider().frame(maxWidth: 320)
+
+                HStack(spacing: 8) {
+                    Image(systemName: "lock.shield")
+                        .foregroundStyle(.green)
+                    Text("100% on-device. No cloud. No telemetry.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("Released under the MIT License")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
+
+                Spacer().frame(height: 20)
             }
-            .padding(.bottom, 16)
+            .frame(maxWidth: .infinity)
+            .padding()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func creditRow(role: String, name: String, link: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(role)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(width: 200, alignment: .leading)
+            if let url = URL(string: link) {
+                Link(name, destination: url)
+                    .font(.callout)
+            } else {
+                Text(name).font(.callout)
+            }
+            Spacer()
+        }
     }
 }
