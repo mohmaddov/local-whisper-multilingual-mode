@@ -286,6 +286,116 @@ actor TranscriptionService {
     }
 }
 
+// MARK: - Result
+
+/// Rich transcription result including per-segment language information.
+struct TranscriptionOutcome {
+    let text: String
+    let segments: [TranscriptionRecord.Segment]
+    let detectedLanguages: [String]
+    let processingMs: Int
+    let modelName: String
+}
+
+extension TranscriptionService {
+    /// Single-language transcription returning a rich result with detected language(s).
+    func transcribeRich(_ audio: AudioData, language: String, prompt: String? = nil) async throws -> TranscriptionOutcome {
+        guard let whisper = whisperKit else {
+            throw TranscriptionError.modelNotLoaded
+        }
+        guard !audio.isTooShort else {
+            throw TranscriptionError.audioTooShort
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        var promptTokens: [Int]? = nil
+        if let prompt = prompt, !prompt.isEmpty, let tokenizer = whisper.tokenizer {
+            let encoded = tokenizer.encode(text: " " + prompt)
+            promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        }
+
+        let options = DecodingOptions(
+            task: .transcribe,
+            language: language.isEmpty ? nil : language,
+            detectLanguage: language.isEmpty ? true : nil,
+            skipSpecialTokens: true,
+            withoutTimestamps: false,
+            promptTokens: promptTokens
+        )
+
+        let results: [TranscriptionResult] = try await whisper.transcribe(audioArray: audio.samples, decodeOptions: options)
+        let processingMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        return buildOutcome(results: results, processingMs: processingMs)
+    }
+
+    /// Multilingual transcription with VAD chunking and per-chunk language detection.
+    func transcribeMultilingualRich(_ audio: AudioData, prompt: String? = nil) async throws -> TranscriptionOutcome {
+        guard let whisper = whisperKit else {
+            throw TranscriptionError.modelNotLoaded
+        }
+        guard !audio.isTooShort else {
+            throw TranscriptionError.audioTooShort
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+
+        var promptTokens: [Int]? = nil
+        if let prompt = prompt, !prompt.isEmpty, let tokenizer = whisper.tokenizer {
+            let encoded = tokenizer.encode(text: " " + prompt)
+            promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
+        }
+
+        let options = DecodingOptions(
+            task: .transcribe,
+            language: nil,
+            usePrefillPrompt: true,
+            detectLanguage: true,
+            skipSpecialTokens: true,
+            withoutTimestamps: false,
+            promptTokens: promptTokens,
+            chunkingStrategy: .vad
+        )
+
+        let results: [TranscriptionResult] = try await whisper.transcribe(audioArray: audio.samples, decodeOptions: options)
+        let processingMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
+        return buildOutcome(results: results, processingMs: processingMs)
+    }
+
+    /// Convert WhisperKit's [TranscriptionResult] into our TranscriptionOutcome.
+    private func buildOutcome(results: [TranscriptionResult], processingMs: Int) -> TranscriptionOutcome {
+        var segments: [TranscriptionRecord.Segment] = []
+        var langs: [String] = []
+        var fullText: [String] = []
+
+        for chunk in results {
+            let chunkLang = chunk.language.isEmpty ? nil : chunk.language
+            if let lang = chunkLang, !langs.contains(lang) { langs.append(lang) }
+            for seg in chunk.segments {
+                let cleaned = Self.stripWhisperArtifacts(seg.text)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if cleaned.isEmpty { continue }
+                segments.append(TranscriptionRecord.Segment(
+                    language: chunkLang,
+                    text: cleaned,
+                    startSeconds: Double(seg.start),
+                    endSeconds: Double(seg.end)
+                ))
+                fullText.append(cleaned)
+            }
+        }
+
+        let text = fullText.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptionOutcome(
+            text: text,
+            segments: segments,
+            detectedLanguages: langs,
+            processingMs: processingMs,
+            modelName: currentModelName ?? "unknown"
+        )
+    }
+}
+
 // MARK: - Errors
 enum TranscriptionError: LocalizedError {
     case modelNotLoaded

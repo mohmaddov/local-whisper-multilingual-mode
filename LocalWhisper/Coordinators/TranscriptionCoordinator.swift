@@ -15,6 +15,7 @@ final class TranscriptionCoordinator: ObservableObject {
     private var audioMuteService: AudioMuteService?
     private var ledgerService: LedgerService?
     private var errorLogService: ErrorLogService?
+    private var transcriptionLogService: TranscriptionLogService?
 
     private var recordingTask: Task<Void, Never>?
 
@@ -25,7 +26,8 @@ final class TranscriptionCoordinator: ObservableObject {
         textInjectionService: TextInjectionService,
         audioMuteService: AudioMuteService,
         ledgerService: LedgerService,
-        errorLogService: ErrorLogService
+        errorLogService: ErrorLogService,
+        transcriptionLogService: TranscriptionLogService
     ) {
         self.appState = appState
         self.audioService = audioService
@@ -34,6 +36,7 @@ final class TranscriptionCoordinator: ObservableObject {
         self.audioMuteService = audioMuteService
         self.ledgerService = ledgerService
         self.errorLogService = errorLogService
+        self.transcriptionLogService = transcriptionLogService
     }
     
     /// Called when hotkey is pressed - start recording
@@ -138,31 +141,48 @@ final class TranscriptionCoordinator: ObservableObject {
         // Transcribe
         appState.transcriptionState = .transcribing
         
+        let appContext = NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown"
+        let multilingual = appState.multilingualMode
+        let requestedLanguage: String? = multilingual ? nil : appState.language
+
         do {
-            let text: String
-            if appState.multilingualMode {
-                text = try await transcriptionService.transcribeMultilingual(
+            let outcome: TranscriptionOutcome
+            if multilingual {
+                outcome = try await transcriptionService.transcribeMultilingualRich(
                     audioData,
                     prompt: appState.vocabularyPrompt
                 )
             } else {
-                text = try await transcriptionService.transcribe(
+                outcome = try await transcriptionService.transcribeRich(
                     audioData,
                     language: appState.language,
                     prompt: appState.vocabularyPrompt
                 )
             }
-            
-            logger.info("Transcription result: \(text)")
-            appState.lastTranscription = text
 
-            // Persist to ledger
-            if !text.isEmpty, let ledgerService = ledgerService {
-                let entry = LedgerEntry(
-                    text: text,
-                    appContext: NSWorkspace.shared.frontmostApplication?.localizedName ?? "Unknown",
-                    duration: audioData.duration
+            logger.info("Transcription [\(outcome.detectedLanguages.joined(separator: ","))] (\(outcome.processingMs)ms): \(outcome.text)")
+            appState.lastTranscription = outcome.text
+
+            // Persist rich JSONL record
+            if let transcriptionLogService = transcriptionLogService {
+                let record = TranscriptionRecord(
+                    text: outcome.text,
+                    appContext: appContext,
+                    durationSeconds: audioData.duration,
+                    processingMs: outcome.processingMs,
+                    mode: multilingual ? .multilingualVAD : .singleLanguage,
+                    modelName: outcome.modelName,
+                    requestedLanguage: requestedLanguage,
+                    detectedLanguages: outcome.detectedLanguages,
+                    segments: outcome.segments,
+                    errorMessage: nil
                 )
+                await transcriptionLogService.append(record)
+            }
+
+            // Also append to legacy markdown ledger for backward compatibility
+            if !outcome.text.isEmpty, let ledgerService = ledgerService {
+                let entry = LedgerEntry(text: outcome.text, appContext: appContext, duration: audioData.duration)
                 do {
                     try await ledgerService.append(entry)
                 } catch {
@@ -171,9 +191,9 @@ final class TranscriptionCoordinator: ObservableObject {
             }
 
             // Inject text
-            if !text.isEmpty {
+            if !outcome.text.isEmpty {
                 try await textInjectionService.injectText(
-                    text,
+                    outcome.text,
                     useClipboardFallback: appState.useClipboardFallback,
                     useSimulateKeypresses: appState.useSimulateKeypresses
                 )
@@ -187,6 +207,22 @@ final class TranscriptionCoordinator: ObservableObject {
             appState.errorMessage = error.localizedDescription
             logger.error("Transcription failed: \(error.localizedDescription)")
             await errorLogService?.logError(error, source: "Transcription")
+            // Also log the failed attempt to the transcription log so failures are visible
+            if let transcriptionLogService = transcriptionLogService {
+                let record = TranscriptionRecord(
+                    text: "",
+                    appContext: appContext,
+                    durationSeconds: audioData.duration,
+                    processingMs: 0,
+                    mode: multilingual ? .multilingualVAD : .singleLanguage,
+                    modelName: (await transcriptionService.loadedModelName) ?? "unknown",
+                    requestedLanguage: requestedLanguage,
+                    detectedLanguages: [],
+                    segments: [],
+                    errorMessage: error.localizedDescription
+                )
+                await transcriptionLogService.append(record)
+            }
             
             // Reset to idle after showing error
             Task {

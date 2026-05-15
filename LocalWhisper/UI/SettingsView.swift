@@ -911,9 +911,27 @@ struct PermissionRow: View {
 // MARK: - Logs Settings
 struct LogsSettingsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var records: [TranscriptionRecord] = []
     @State private var errorLogContent: String = ""
-    @State private var recentTranscriptions: [LedgerEntry] = []
     @State private var selectedTab = 0
+    @State private var searchText: String = ""
+    @State private var languageFilter: String = ""
+    @State private var expandedIDs: Set<UUID> = []
+
+    private var filteredRecords: [TranscriptionRecord] {
+        records.filter { r in
+            let matchesSearch = searchText.isEmpty
+                || r.text.localizedCaseInsensitiveContains(searchText)
+                || r.appContext.localizedCaseInsensitiveContains(searchText)
+            let matchesLang = languageFilter.isEmpty
+                || r.detectedLanguages.contains(languageFilter)
+            return matchesSearch && matchesLang
+        }
+    }
+
+    private var allLanguagesUsed: [String] {
+        Array(Set(records.flatMap { $0.detectedLanguages })).sorted()
+    }
 
     var body: some View {
         ScrollView {
@@ -922,7 +940,7 @@ struct LogsSettingsView: View {
                     Text("Logs")
                         .font(.title2)
                         .fontWeight(.semibold)
-                    Text("Inspect transcription history and runtime errors.")
+                    Text("Inspect transcription history (with detected languages) and runtime errors.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
@@ -941,67 +959,104 @@ struct LogsSettingsView: View {
             }
             .padding(24)
         }
-        .task {
-            await refresh()
+        .task { await refresh() }
+    }
+
+    // MARK: Transcriptions
+
+    private var statsBar: some View {
+        let totalDuration = records.reduce(0.0) { $0 + $1.durationSeconds }
+        let multilingualCount = records.filter { $0.mode == .multilingualVAD }.count
+        let failedCount = records.filter { $0.errorMessage != nil }.count
+        return HStack(spacing: 16) {
+            stat("Total", "\(records.count)")
+            stat("Duration", formatDuration(totalDuration))
+            stat("Multilingual", "\(multilingualCount)")
+            stat("Failed", "\(failedCount)", color: failedCount > 0 ? .red : nil)
+            stat("Languages", "\(allLanguagesUsed.count)")
         }
+    }
+
+    private func stat(_ label: String, _ value: String, color: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+            Text(value).font(.headline).foregroundStyle(color ?? .primary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(8)
     }
 
     private var transcriptionsView: some View {
         VStack(alignment: .leading, spacing: 12) {
+            statsBar
+
             HStack {
-                Text("\(recentTranscriptions.count) entries")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                TextField("Search…", text: $searchText)
+                    .textFieldStyle(.roundedBorder)
+                Picker("Language", selection: $languageFilter) {
+                    Text("All languages").tag("")
+                    ForEach(allLanguagesUsed, id: \.self) { lang in
+                        Text("\(TranscriptionRecord.languageFlag(lang)) \(TranscriptionRecord.languageDisplayName(lang))").tag(lang)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 180)
+            }
+
+            HStack {
+                Text("\(filteredRecords.count) of \(records.count) entries")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button {
-                    NSWorkspace.shared.open(LedgerService.defaultBasePath)
-                } label: {
-                    Label("Open Folder", systemImage: "folder")
-                }
+                    NSWorkspace.shared.open(TranscriptionLogService.folderURL)
+                } label: { Label("Open Folder", systemImage: "folder") }
+                .buttonStyle(.bordered)
+                Button {
+                    Task { await exportTranscriptions() }
+                } label: { Label("Export", systemImage: "square.and.arrow.up") }
                 .buttonStyle(.bordered)
                 Button {
                     Task { await refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
+                } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 .buttonStyle(.bordered)
             }
 
-            if recentTranscriptions.isEmpty {
-                emptyState("No transcriptions yet", icon: "waveform")
+            if filteredRecords.isEmpty {
+                emptyState(records.isEmpty ? "No transcriptions yet" : "No results", icon: "waveform")
             } else {
-                VStack(spacing: 0) {
-                    ForEach(recentTranscriptions.reversed().prefix(100)) { entry in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(entry.formattedDateTime)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(entry.appContext)
-                                    .font(.caption2)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.secondary.opacity(0.15))
-                                    .cornerRadius(4)
-                                Text("\(Int(entry.duration))s")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
+                LazyVStack(spacing: 8) {
+                    ForEach(filteredRecords) { record in
+                        TranscriptionRow(
+                            record: record,
+                            isExpanded: expandedIDs.contains(record.id),
+                            onToggle: {
+                                if expandedIDs.contains(record.id) {
+                                    expandedIDs.remove(record.id)
+                                } else {
+                                    expandedIDs.insert(record.id)
+                                }
+                            },
+                            onCopy: {
+                                let pasteboard = NSPasteboard.general
+                                pasteboard.clearContents()
+                                pasteboard.setString(record.text, forType: .string)
+                            },
+                            onDelete: {
+                                Task {
+                                    await appState.transcriptionLogService.delete(id: record.id)
+                                    await refresh()
+                                }
                             }
-                            Text(entry.text)
-                                .font(.body)
-                                .textSelection(.enabled)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        Divider()
+                        )
                     }
                 }
-                .background(Color(nsColor: .controlBackgroundColor))
-                .cornerRadius(10)
             }
         }
     }
+
+    // MARK: Errors
 
     private var errorsView: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -1009,24 +1064,18 @@ struct LogsSettingsView: View {
                 Spacer()
                 Button {
                     NSWorkspace.shared.open(ErrorLogService.logFolderURL)
-                } label: {
-                    Label("Open Folder", systemImage: "folder")
-                }
+                } label: { Label("Open Folder", systemImage: "folder") }
                 .buttonStyle(.bordered)
                 Button {
                     Task {
                         await appState.errorLogService.clear()
                         await refresh()
                     }
-                } label: {
-                    Label("Clear", systemImage: "trash")
-                }
+                } label: { Label("Clear", systemImage: "trash") }
                 .buttonStyle(.bordered)
                 Button {
                     Task { await refresh() }
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
+                } label: { Label("Refresh", systemImage: "arrow.clockwise") }
                 .buttonStyle(.bordered)
             }
 
@@ -1062,9 +1111,146 @@ struct LogsSettingsView: View {
         .cornerRadius(12)
     }
 
+    private func formatDuration(_ seconds: Double) -> String {
+        let total = Int(seconds)
+        let h = total / 3600
+        let m = (total % 3600) / 60
+        let s = total % 60
+        if h > 0 { return String(format: "%dh %02dm", h, m) }
+        if m > 0 { return String(format: "%dm %02ds", m, s) }
+        return "\(s)s"
+    }
+
     private func refresh() async {
+        records = await appState.transcriptionLogService.readAll()
         errorLogContent = await appState.errorLogService.readTail(lineCount: 500)
-        recentTranscriptions = (try? await appState.ledgerService.getAllEntries()) ?? []
+    }
+
+    private func exportTranscriptions() async {
+        let text = await appState.transcriptionLogService.exportAsText()
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "transcriptions.txt"
+        panel.allowedContentTypes = [.plainText]
+        if panel.runModal() == .OK, let url = panel.url {
+            try? text.write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+}
+
+// MARK: - Transcription Row
+
+struct TranscriptionRow: View {
+    let record: TranscriptionRecord
+    let isExpanded: Bool
+    let onToggle: () -> Void
+    let onCopy: () -> Void
+    let onDelete: () -> Void
+
+    private var formattedTimestamp: String {
+        let df = DateFormatter()
+        df.dateStyle = .short
+        df.timeStyle = .medium
+        return df.string(from: record.timestamp)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(formattedTimestamp)
+                    .font(.caption).foregroundStyle(.secondary)
+
+                if record.mode == .multilingualVAD {
+                    Label("Multilingual", systemImage: "globe")
+                        .font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.purple.opacity(0.15))
+                        .foregroundStyle(.purple)
+                        .cornerRadius(4)
+                }
+
+                ForEach(record.detectedLanguages, id: \.self) { lang in
+                    Text("\(TranscriptionRecord.languageFlag(lang)) \(TranscriptionRecord.languageDisplayName(lang))")
+                        .font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.blue.opacity(0.12))
+                        .cornerRadius(4)
+                }
+
+                Spacer()
+
+                Text(record.appContext)
+                    .font(.caption2)
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(Color.secondary.opacity(0.15))
+                    .cornerRadius(4)
+                Text("\(Int(record.durationSeconds))s · \(record.processingMs)ms")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
+
+            if let err = record.errorMessage {
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Text(record.text)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .lineLimit(isExpanded ? nil : 3)
+            }
+
+            if isExpanded && record.segments.count > 1 {
+                Divider()
+                Text("Segments")
+                    .font(.caption).fontWeight(.semibold).foregroundStyle(.secondary)
+                ForEach(Array(record.segments.enumerated()), id: \.offset) { _, seg in
+                    HStack(alignment: .top, spacing: 8) {
+                        if let lang = seg.language {
+                            Text(TranscriptionRecord.languageFlag(lang))
+                                .frame(width: 24)
+                        } else {
+                            Text("·").frame(width: 24).foregroundStyle(.secondary)
+                        }
+                        Text(seg.text)
+                            .font(.caption)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if let dur = seg.durationSeconds {
+                            Text(String(format: "%.1fs", dur))
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 8) {
+                if record.segments.count > 1 {
+                    Button(action: onToggle) {
+                        Label(isExpanded ? "Hide segments" : "Show \(record.segments.count) segments",
+                              systemImage: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                }
+                Spacer()
+                Button(action: onCopy) {
+                    Image(systemName: "doc.on.doc").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Copy text")
+
+                Button(action: onDelete) {
+                    Image(systemName: "trash").font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Delete entry")
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .cornerRadius(10)
     }
 }
 
