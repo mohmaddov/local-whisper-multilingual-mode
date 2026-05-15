@@ -15,10 +15,14 @@ actor AudioCaptureService {
     }
     
     func startRecording() async throws {
-        guard !isCurrentlyRecording else {
-            throw AudioCaptureError.alreadyRecording
+        // Force-reset stale state (can happen after a crash or forced stop from Xcode)
+        if isCurrentlyRecording {
+            audioEngine?.inputNode.removeTap(onBus: 0)
+            audioEngine?.stop()
+            audioEngine = nil
+            isCurrentlyRecording = false
         }
-        
+
         audioBuffers.removeAll()
         
         let engine = AVAudioEngine()

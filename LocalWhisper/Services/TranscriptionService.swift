@@ -380,11 +380,15 @@ extension TranscriptionService {
             promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
         }
 
-        // Per-chunk decoding options: no prefill, force fresh language detection.
+        // Per-chunk decoding options: prefill prompt MUST stay on so the
+        // <task=transcribe> token is emitted — otherwise Whisper falls back to
+        // its training prior and translates non-English audio to English.
+        // Cross-chunk language bias is already avoided because each
+        // whisper.transcribe() call starts with fresh decoder state.
         let options = DecodingOptions(
             task: .transcribe,
             language: nil,
-            usePrefillPrompt: false,
+            usePrefillPrompt: true,
             detectLanguage: true,
             skipSpecialTokens: true,
             withoutTimestamps: false,
