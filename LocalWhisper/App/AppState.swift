@@ -51,6 +51,13 @@ final class AppState: ObservableObject {
     @Published var multilingualMode: Bool {
         didSet { UserDefaults.standard.set(multilingualMode, forKey: "multilingualMode") }
     }
+    /// HuggingFace model ID for the local LLM used to summarize AI Notes.
+    @Published var selectedLLMModel: String {
+        didSet { UserDefaults.standard.set(selectedLLMModel, forKey: "selectedLLMModel") }
+    }
+    /// Currently loaded LLM ID (may differ from selectedLLMModel during a swap).
+    @Published var activeLLMModel: String? = nil
+    @Published var downloadingLLMModel: String? = nil
     @Published var dictationCommandsEnabled: Bool {
         didSet { UserDefaults.standard.set(dictationCommandsEnabled, forKey: "dictationCommandsEnabled") }
     }
@@ -157,6 +164,7 @@ final class AppState: ObservableObject {
         self.customVocabulary = UserDefaults.standard.stringArray(forKey: "customVocabulary") ?? []
         self.muteAudioWhileRecording = UserDefaults.standard.object(forKey: "muteAudioWhileRecording") as? Bool ?? true
         self.multilingualMode = UserDefaults.standard.object(forKey: "multilingualMode") as? Bool ?? false
+        self.selectedLLMModel = UserDefaults.standard.string(forKey: "selectedLLMModel") ?? TagExtractionService.defaultModelId
         self.dictationCommandsEnabled = UserDefaults.standard.object(forKey: "dictationCommandsEnabled") as? Bool ?? false
         if let data = UserDefaults.standard.data(forKey: "dictationCommands"),
            let decoded = try? JSONDecoder().decode([DictationCommand].self, from: data) {

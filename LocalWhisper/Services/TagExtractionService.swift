@@ -63,41 +63,36 @@ actor TagExtractionService {
     
     // MARK: - Model Loading
     
-    /// Load the tag extraction model
+    /// Load the tag extraction model. Atomic swap: the currently loaded model
+    /// stays usable until the new one is fully ready.
     func loadModel(modelId: String? = nil) async throws {
         let targetModelId = modelId ?? Self.defaultModelId
-        
+
         // Skip if already loaded with same model
         if modelContainer != nil && currentModelId == targetModelId {
             logger.info("Tag model already loaded: \(targetModelId)")
             return
         }
-        
+
         guard !isLoading else {
             logger.warning("Tag model already loading, skipping")
             return
         }
-        
+
         isLoading = true
         progressContinuation.yield(0.05)
-        
-        logger.info("Loading tag model: \(targetModelId)")
+
+        logger.info("Loading tag model: \(targetModelId) (current \(self.currentModelId ?? "none") stays usable until ready)")
         let startTime = CFAbsoluteTimeGetCurrent()
-        
+
         do {
-            // Unload existing model if any
-            if modelContainer != nil {
-                modelContainer = nil
-                currentModelId = nil
-            }
-            
             progressContinuation.yield(0.1)
-            
-            // Configure the model - create a custom configuration for the model ID
+
             let modelConfiguration = ModelConfiguration(id: targetModelId)
-            
-            // Load model with progress tracking
-            modelContainer = try await LLMModelFactory.shared.loadContainer(
+
+            // Load into a local var so the currently-active container keeps working
+            // for in-flight summarization calls until we swap.
+            let newContainer = try await LLMModelFactory.shared.loadContainer(
                 from: HubClient.default,
                 configuration: modelConfiguration
             ) { progress in
@@ -106,20 +101,22 @@ actor TagExtractionService {
                     self.progressContinuation.yield(normalizedProgress)
                 }
             }
-            
+
+            // Atomic swap.
+            modelContainer = newContainer
             currentModelId = targetModelId
             progressContinuation.yield(1.0)
-            
+
             let loadTime = CFAbsoluteTimeGetCurrent() - startTime
             logger.info("Tag model loaded in \(String(format: "%.2f", loadTime))s: \(targetModelId)")
-            
+
         } catch {
             progressContinuation.yield(0.0)
             logger.error("Failed to load tag model: \(error.localizedDescription)")
             isLoading = false
             throw TagExtractionError.modelLoadFailed(error.localizedDescription)
         }
-        
+
         isLoading = false
     }
     

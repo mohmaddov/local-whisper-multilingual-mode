@@ -237,11 +237,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
             // Load the LLM in background — only needed for AI Notes summarization.
             // Best-effort: failure here doesn't block dictation.
+            let llmTarget = appState.selectedLLMModel
+            appState.downloadingLLMModel = llmTarget
             Task.detached(priority: .background) {
+                let appState = await AppState.shared
                 do {
-                    try await AppState.shared.tagExtractionService.loadModel()
-                    print("[AppDelegate] ✅ Note summarization LLM loaded")
+                    try await appState.tagExtractionService.loadModel(modelId: llmTarget)
+                    let active = await appState.tagExtractionService.loadedModelId
+                    await MainActor.run {
+                        appState.activeLLMModel = active
+                        appState.downloadingLLMModel = nil
+                    }
+                    print("[AppDelegate] ✅ Note summarization LLM loaded: \(active ?? "?")")
                 } catch {
+                    await MainActor.run {
+                        appState.downloadingLLMModel = nil
+                    }
                     print("[AppDelegate] ⚠️ LLM load skipped: \(error.localizedDescription)")
                 }
             }

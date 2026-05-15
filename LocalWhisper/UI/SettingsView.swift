@@ -275,6 +275,8 @@ struct ModelSettingsView: View {
 
                 DownloadedModelsSection()
 
+                LLMModelSection()
+
                 Spacer()
             }
             .padding(24)
@@ -303,6 +305,161 @@ struct ModelSettingsView: View {
                 appState.downloadingModel = nil
             }
         }
+    }
+}
+
+// MARK: - LLM (AI Notes) Section
+struct LLMModelSection: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Summarization Model (AI Notes)")
+                    .font(.headline)
+                Spacer()
+                if appState.downloadingLLMModel != nil {
+                    HStack(spacing: 4) {
+                        ProgressView().scaleEffect(0.6)
+                        Text("Loading…").font(.caption2).foregroundStyle(.secondary)
+                    }
+                } else if let active = appState.activeLLMModel {
+                    Text("Active: \(shortName(active))")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                } else {
+                    Text("Not loaded")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+            }
+
+            Text("Local LLM used to turn long voice recordings into structured notes. Larger = better summaries but slower.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                ForEach(TagExtractionService.availableModels) { model in
+                    LLMModelCard(
+                        model: model,
+                        isActive: appState.activeLLMModel == model.id,
+                        isDownloading: appState.downloadingLLMModel == model.id,
+                        isSelected: appState.selectedLLMModel == model.id
+                    ) {
+                        switchModel(to: model.id)
+                    }
+                }
+            }
+            if appState.downloadingLLMModel != nil,
+               appState.activeLLMModel != nil,
+               appState.downloadingLLMModel != appState.activeLLMModel {
+                Text("Loading \(shortName(appState.downloadingLLMModel ?? ""))… You can keep using \(shortName(appState.activeLLMModel ?? "")) in the meantime.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func shortName(_ id: String) -> String {
+        String(id.split(separator: "/").last ?? Substring(id))
+    }
+
+    private func switchModel(to modelId: String) {
+        if modelId == appState.activeLLMModel && appState.downloadingLLMModel == nil { return }
+        if modelId == appState.downloadingLLMModel { return }
+
+        appState.selectedLLMModel = modelId
+        appState.downloadingLLMModel = modelId
+        Task {
+            do {
+                try await appState.tagExtractionService.loadModel(modelId: modelId)
+                let active = await appState.tagExtractionService.loadedModelId
+                await MainActor.run {
+                    appState.activeLLMModel = active
+                    appState.downloadingLLMModel = nil
+                }
+            } catch {
+                await MainActor.run {
+                    appState.downloadingLLMModel = nil
+                    appState.errorMessage = "LLM load failed: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+}
+
+struct LLMModelCard: View {
+    let model: TagExtractionService.TagModel
+    let isActive: Bool
+    let isDownloading: Bool
+    let isSelected: Bool
+    let action: () -> Void
+
+    private var borderColor: Color {
+        if isActive { return .green }
+        if isSelected { return .accentColor }
+        return .clear
+    }
+
+    private var background: Color {
+        if isActive { return Color.green.opacity(0.08) }
+        if isSelected { return Color.accentColor.opacity(0.1) }
+        return Color(nsColor: .controlBackgroundColor)
+    }
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(model.name)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Spacer()
+                    if isDownloading {
+                        ProgressView().scaleEffect(0.6)
+                    } else if isActive {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text(model.size)
+                        .font(.caption2)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.2))
+                        .cornerRadius(4)
+                    if isActive {
+                        Text("Active")
+                            .font(.caption2).fontWeight(.semibold)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.green.opacity(0.2))
+                            .foregroundStyle(.green)
+                            .cornerRadius(4)
+                    } else if isDownloading {
+                        Text("Loading…")
+                            .font(.caption2).fontWeight(.semibold)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.orange.opacity(0.2))
+                            .foregroundStyle(.orange)
+                            .cornerRadius(4)
+                    }
+                }
+                Text(model.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(background)
+            .cornerRadius(10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(borderColor, lineWidth: 2)
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isDownloading)
     }
 }
 
