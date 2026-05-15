@@ -120,17 +120,23 @@ actor TranscriptionService {
             promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
         }
 
-        // VAD chunking + per-chunk language detection.
-        // WhisperKit automatically detects the language for each chunk when
-        // language == nil and detectLanguage == true on a multilingual model.
+        // VAD chunking with FRESH per-chunk language detection.
+        //
+        // usePrefillPrompt is intentionally false: when it is true, WhisperKit reuses
+        // the previous chunk's decoded text as a prefix prompt for the next chunk,
+        // which biases Whisper toward the previous chunk's language and causes it to
+        // *translate* mid-recording instead of transcribing (e.g. Russian audio coming
+        // out in French after a French chunk). Disabling prefill forces every VAD
+        // chunk to start from a clean decoder state and run language detection again.
         let options = DecodingOptions(
             task: .transcribe,
             language: nil,
-            usePrefillPrompt: true,
+            usePrefillPrompt: false,
             detectLanguage: true,
             skipSpecialTokens: true,
-            withoutTimestamps: true,
+            withoutTimestamps: false,
             promptTokens: promptTokens,
+            suppressBlank: true,
             chunkingStrategy: .vad
         )
 
