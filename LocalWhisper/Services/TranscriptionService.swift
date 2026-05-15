@@ -335,7 +335,14 @@ extension TranscriptionService {
         return buildOutcome(results: results, processingMs: processingMs)
     }
 
-    /// Multilingual transcription with VAD chunking and per-chunk language detection.
+    /// Multilingual transcription with manual VAD + per-chunk fresh transcribe calls.
+    ///
+    /// Using WhisperKit's built-in `.vad` chunking still let the decoder retain enough
+    /// state between chunks to bias language detection toward the previously-detected
+    /// language — Russian audio after a French chunk was detected as French and
+    /// rendered phonetically with French spelling. Doing VAD ourselves and calling
+    /// `whisper.transcribe` once per active region guarantees each chunk is an
+    /// independent invocation, so language detection truly runs from scratch.
     func transcribeMultilingualRich(_ audio: AudioData, prompt: String? = nil) async throws -> TranscriptionOutcome {
         guard let whisper = whisperKit else {
             throw TranscriptionError.modelNotLoaded
@@ -345,27 +352,105 @@ extension TranscriptionService {
         }
 
         let startTime = CFAbsoluteTimeGetCurrent()
+        let sampleRate = 16000
 
+        // 1) Locate active speech regions via energy VAD.
+        let vad = EnergyVAD(sampleRate: sampleRate, frameLength: 0.1, energyThreshold: 0.02)
+        let active = vad.calculateActiveChunks(in: audio.samples)
+        let regions: [(start: Int, end: Int)] = active.isEmpty
+            ? [(0, audio.samples.count)]
+            : active.map { ($0.startIndex, $0.endIndex) }
+
+        // 2) Merge regions separated by very short gaps (<0.5s) so we don't create
+        //    sub-second slivers that fool language detection.
+        let mergeGapSamples = sampleRate / 2
+        var merged: [(start: Int, end: Int)] = []
+        for r in regions {
+            if let last = merged.last, r.start - last.end < mergeGapSamples {
+                merged[merged.count - 1].end = r.end
+            } else {
+                merged.append(r)
+            }
+        }
+
+        // 3) Prepare optional vocabulary prompt tokens once.
         var promptTokens: [Int]? = nil
         if let prompt = prompt, !prompt.isEmpty, let tokenizer = whisper.tokenizer {
             let encoded = tokenizer.encode(text: " " + prompt)
             promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
         }
 
+        // Per-chunk decoding options: no prefill, force fresh language detection.
         let options = DecodingOptions(
             task: .transcribe,
             language: nil,
-            usePrefillPrompt: true,
+            usePrefillPrompt: false,
             detectLanguage: true,
             skipSpecialTokens: true,
             withoutTimestamps: false,
             promptTokens: promptTokens,
-            chunkingStrategy: .vad
+            suppressBlank: true,
+            chunkingStrategy: nil
         )
 
-        let results: [TranscriptionResult] = try await whisper.transcribe(audioArray: audio.samples, decodeOptions: options)
+        // 4) Transcribe each VAD region as an independent invocation. Pad short
+        //    slices with trailing silence — Whisper's language detector is
+        //    unreliable on sub-second audio.
+        let minTranscribeSamples = sampleRate / 2 // skip anything <0.5s
+        let detectionPadTarget = sampleRate * 3   // pad up to 3s for reliable LD
+
+        var allSegments: [TranscriptionRecord.Segment] = []
+        var detectedLangs: [String] = []
+        var fullText: [String] = []
+
+        print("[TranscriptionService] 🌍 Multilingual: \(merged.count) VAD chunks across \(String(format: "%.1f", Double(audio.samples.count) / Double(sampleRate)))s")
+
+        for region in merged {
+            let length = region.end - region.start
+            guard length >= minTranscribeSamples else { continue }
+
+            var slice = Array(audio.samples[region.start..<region.end])
+            if slice.count < detectionPadTarget {
+                slice.append(contentsOf: Array(repeating: 0.0, count: detectionPadTarget - slice.count))
+            }
+            let offsetSec = Double(region.start) / Double(sampleRate)
+
+            do {
+                let results: [TranscriptionResult] = try await whisper.transcribe(
+                    audioArray: slice,
+                    decodeOptions: options
+                )
+                for result in results {
+                    let lang = result.language.isEmpty ? nil : result.language
+                    if let lang = lang, !detectedLangs.contains(lang) { detectedLangs.append(lang) }
+                    print("[TranscriptionService]   • chunk @\(String(format: "%.1f", offsetSec))s → \(lang ?? "?")")
+                    for seg in result.segments {
+                        let cleaned = Self.stripWhisperArtifacts(seg.text)
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if cleaned.isEmpty { continue }
+                        allSegments.append(TranscriptionRecord.Segment(
+                            language: lang,
+                            text: cleaned,
+                            startSeconds: offsetSec + Double(seg.start),
+                            endSeconds: offsetSec + Double(seg.end)
+                        ))
+                        fullText.append(cleaned)
+                    }
+                }
+            } catch {
+                print("[TranscriptionService] ❌ Chunk transcribe failed at \(String(format: "%.1f", offsetSec))s: \(error.localizedDescription)")
+            }
+        }
+
+        let text = fullText.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
         let processingMs = Int((CFAbsoluteTimeGetCurrent() - startTime) * 1000)
-        return buildOutcome(results: results, processingMs: processingMs)
+        return TranscriptionOutcome(
+            text: text,
+            segments: allSegments,
+            detectedLanguages: detectedLangs,
+            processingMs: processingMs,
+            modelName: currentModelName ?? "unknown"
+        )
     }
 
     /// Convert WhisperKit's [TranscriptionResult] into our TranscriptionOutcome.
