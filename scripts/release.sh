@@ -107,15 +107,12 @@ DERIVED_BUNDLE=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
 
 if [ -n "$DERIVED_BUNDLE" ] && [ -f "$DERIVED_BUNDLE/Contents/Resources/default.metallib" ]; then
     METALLIB_SRC="$DERIVED_BUNDLE/Contents/Resources/default.metallib"
-    # MLX searches for default.metallib in several locations. We populate the
-    # two that work reliably from a packaged .app:
-    #   1) <binary_dir>/Resources/default.metallib  (load_colocated_library)
-    #   2) <bundleURL>/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib
-    #      (load_swiftpm_library, used when SWIFTPM_BUNDLE is compiled in)
+    # MLX searches for default.metallib at several paths; <binary_dir>/Resources/default.metallib
+    # is the one that works reliably from a packaged .app without violating
+    # macOS code-signing rules (which forbid unsealed files at the bundle root).
     mkdir -p "$APP_BUNDLE/Contents/MacOS/Resources"
     cp "$METALLIB_SRC" "$APP_BUNDLE/Contents/MacOS/Resources/default.metallib"
-    cp -R "$DERIVED_BUNDLE" "$APP_BUNDLE/mlx-swift_Cmlx.bundle"
-    echo "   ✓ Installed default.metallib (colocated + SwiftPM bundle at app root)"
+    echo "   ✓ Installed default.metallib at Contents/MacOS/Resources/"
 else
     echo "   ⚠️ mlx-swift_Cmlx.bundle not found in DerivedData."
     echo "      Open Package.swift in Xcode, build once (Cmd+B), then re-run this script."
