@@ -99,8 +99,9 @@ actor TranscriptionService {
     }
     
     /// Transcribe audio with per-segment language detection (multilingual mode).
-    /// Splits audio into 5-second chunks and detects the language independently for each,
-    /// enabling seamless switching between languages within a single recording.
+    /// Uses WhisperKit's built-in VAD (voice activity detection) chunking which splits
+    /// audio on natural speech pauses, then detects the language independently for each
+    /// chunk — enabling seamless switching between languages within a single recording.
     func transcribeMultilingual(_ audio: AudioData, prompt: String? = nil) async throws -> String {
         guard let whisper = whisperKit else {
             throw TranscriptionError.modelNotLoaded
@@ -109,10 +110,9 @@ actor TranscriptionService {
             throw TranscriptionError.audioTooShort
         }
 
-        let sampleRate = 16000
-        let segmentSamples = 5 * sampleRate // 5-second segments
-        let minSegmentSamples = sampleRate / 2 // 0.5s minimum
-        let samples = audio.samples
+        let audioDuration = Double(audio.samples.count) / 16000.0
+        print("[TranscriptionService] 🌍 Multilingual transcribing \(String(format: "%.1f", audioDuration))s of audio")
+        let startTime = CFAbsoluteTimeGetCurrent()
 
         var promptTokens: [Int]? = nil
         if let prompt = prompt, !prompt.isEmpty, let tokenizer = whisper.tokenizer {
@@ -120,33 +120,44 @@ actor TranscriptionService {
             promptTokens = encoded.filter { $0 < tokenizer.specialTokens.specialTokenBegin }
         }
 
+        // VAD chunking + per-chunk language detection.
+        // WhisperKit automatically detects the language for each chunk when
+        // language == nil and detectLanguage == true on a multilingual model.
         let options = DecodingOptions(
             task: .transcribe,
-            language: nil, // auto-detect per segment
+            language: nil,
+            usePrefillPrompt: true,
+            detectLanguage: true,
             skipSpecialTokens: true,
             withoutTimestamps: true,
-            promptTokens: promptTokens
+            promptTokens: promptTokens,
+            chunkingStrategy: .vad
         )
 
-        var parts: [String] = []
-        var offset = 0
+        let results = try await whisper.transcribe(
+            audioArray: audio.samples,
+            decodeOptions: options
+        )
 
-        while offset < samples.count {
-            let end = min(offset + segmentSamples, samples.count)
-            let chunk = Array(samples[offset..<end])
-            offset += segmentSamples
+        let transcriptionTime = CFAbsoluteTimeGetCurrent() - startTime
+        let speedFactor = audioDuration / transcriptionTime
+        print("[TranscriptionService] ⚡ Multilingual transcription completed in \(String(format: "%.2f", transcriptionTime))s (speed factor: \(String(format: "%.1f", speedFactor))x)")
 
-            guard chunk.count >= minSegmentSamples else { continue }
+        let rawText = results.compactMap { $0.text }.joined(separator: " ")
+        let cleaned = Self.stripWhisperArtifacts(rawText)
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
-            let results = try await whisper.transcribe(audioArray: chunk, decodeOptions: options)
-            let text = results.compactMap { $0.text }.joined(separator: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                parts.append(text)
-            }
+    /// Remove non-speech placeholders Whisper sometimes emits (e.g. "(foreign language)").
+    private static func stripWhisperArtifacts(_ text: String) -> String {
+        let pattern = #"[\(\[][^\)\]]*?(foreign language|no audio|silence|inaudible|music|background noise|speaking|non-english)[^\(\[]*?[\)\]]"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return text
         }
-
-        return parts.joined(separator: " ")
+        let range = NSRange(text.startIndex..., in: text)
+        let cleaned = regex.stringByReplacingMatches(in: text, options: [], range: range, withTemplate: "")
+        // Collapse multiple spaces
+        return cleaned.replacingOccurrences(of: #" +"#, with: " ", options: .regularExpression)
     }
 
     /// Transcribe audio data to text
